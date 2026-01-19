@@ -1,0 +1,50 @@
+# TDL Wrapper Configuration Example
+# Copy this file to config.yaml and customize
+
+# Path to tdl executable (leave as 'tdl' if in PATH)
+tdl_path: "tdl"
+
+# Database configuration
+database:
+  path: "tdl_wrapper.db"
+
+# Download settings
+downloads:
+  base_directory: "./downloads"
+  skip_existing: true
+  organize_by_chat: true  # Create subdirectory for each chat
+
+# Export settings
+exports:
+  base_directory: "./exports"
+  include_content: true  # Include message text
+  include_all: false     # Include non-media messages
+
+# Scheduling
+scheduler:
+  enabled: true
+  default_interval: "1h"  # Options: 30m, 1h, 6h, 12h, 1d
+  timezone: "UTC"
+
+# Discord notifications
+discord:
+  enabled: false
+  webhook_url: ""  # Set your Discord webhook URL here
+  notify_on_start: true
+  notify_on_complete: true
+  notify_on_error: true
+  notify_batch_summary: true
+
+# Web dashboard
+web:
+  enabled: true
+  host: "127.0.0.1"
+  port: 5000
+  debug: false
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "tdl_wrapper.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5

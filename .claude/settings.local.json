@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:docs.iyear.me)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(powershell -ExecutionPolicy Bypass -File setup_windows.ps1)",
+      "Bash(C:/tdl/tdl.exe version:*)",
+      "Bash(python -m src.cli:*)",
+      "Bash(C:/tdl/tdl.exe chat:*)",
+      "Bash(chcp 65001)",
+      "Bash(cmd /c \"chcp 65001 >nul && python -m src.cli sync-chats\")",
+      "Bash(PYTHONIOENCODING=utf-8 python:*)",
+      "Bash(python:*)",
+      "Bash(set PYTHONIOENCODING=utf-8:*)",
+      "Bash(tdl-wrapper.bat status:*)",
+      "Bash(tree:*)",
+      "Bash(timeout /t 5)",
+      "Bash(curl:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill //F //PID 34812)",
+      "Bash(timeout:*)",
+      "Bash(exit 0)",
+      "Bash(taskkill:*)",
+      "Bash(git add:*)",
+      "Bash(dir /s /b nul)",
+      "Bash(powershell -Command \"Remove-Item -Path ''\\\\?\\\\C:\\\\Users\\\\pesto\\\\Documents\\\\Projects\\\\tdl-wrapper\\\\nul'' -Force\")",
+      "Bash(powershell -Command \"Remove-Item -LiteralPath ''.\\\\nul'' -Force\")"
+    ]
+  }
+}
