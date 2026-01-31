@@ -8,7 +8,30 @@ TDL Wrapper is a Python-based state management layer for the `tdl` CLI (Telegram
 
 ## Key Commands
 
-### Development and Testing
+### Docker Commands (Recommended for Production)
+
+```bash
+# Setup and build
+make setup                                # Initial setup
+make login                                # TDL authentication
+
+# Container management
+make up                                   # Start web dashboard
+make daemon                               # Start scheduler daemon
+make down                                 # Stop containers
+make logs                                 # View logs
+
+# CLI operations via Docker
+make cli CMD='list'                       # List chats
+make cli CMD='sync CHAT_ID'              # Sync chat
+make cli CMD='sync --all'                # Sync all
+make sync-chats                           # Import from Telegram
+
+# Direct docker-compose
+docker-compose exec tdl-wrapper python -m src.cli <command>
+```
+
+### Development and Testing (Local)
 ```bash
 # Run CLI commands
 python -m src.cli <command>
@@ -40,6 +63,10 @@ python -m src.cli test-discord
 
 # Reprocess exports (fix counts/trigger downloads)
 python -m src.cli reprocess --download
+
+# Rename files to use message IDs
+python -m src.cli rename <chat_id>        # Rename for specific chat
+python -m src.cli rename --all            # Rename for all chats
 ```
 
 ### Installation
@@ -57,7 +84,11 @@ pip install -e .                          # Install as editable package (optiona
 - Handles export and download operations via subprocess
 - Manages incremental sync logic using timestamps
 - Special handling for Windows: tdl process doesn't exit cleanly, so downloads are monitored via log file and killed after 10s of inactivity
-- Export always starts from timestamp 0 (1970) - incrementality comes from `tdl dl --skip-same` during downloads
+- **Timestamp-based incremental exports**: Each export starts from the `end_timestamp` of the last successful export, ensuring only NEW messages are exported (no duplicates)
+- **Pre-download auto-rename**: Before downloading, automatically renames any unrenamed files from previous downloads using all historical exports (ensures proper duplicate detection even after upgrades)
+- **Smart download filtering**: After pre-rename, scans destination directory for existing message IDs, filters export JSON to exclude already-downloaded files, then creates temp filtered JSON for tdl to process
+- **No --skip-same flag**: Since files are renamed to message IDs, tdl can't match them against export JSON. Instead, we pre-filter the JSON to only include undownloaded messages
+- **Post-download auto-rename**: Files are automatically renamed to message IDs (e.g., 12345.jpg) after every download for guaranteed unique, chronological naming. Enabled by default via `rename_by_timestamp: true` config
 
 **src/database.py (Database + SQLAlchemy Models)**
 - SQLite database with SQLAlchemy ORM
@@ -98,10 +129,21 @@ pip install -e .                          # Install as editable package (optiona
 ### Important Architectural Details
 
 **Incremental Sync Strategy**
-- Exports always use full time range (0 to current timestamp)
-- Incrementality handled by `tdl dl --skip-same --continue` flags during download
-- Database tracks export/download history for each chat
-- State management ensures no duplicate downloads
+- **Download-based incrementality**: Each export starts from `Chat.last_successful_download_timestamp + 1`
+- **Failure recovery**: If export succeeds but download fails, next export will re-export those messages
+- Export timestamps are only updated AFTER successful download completion
+- First export for a chat starts from timestamp 0 (1970)
+- Exports only contain NEW messages since last successful download, guaranteeing no duplicates
+- **Smart pre-download process**: Before downloading, the wrapper:
+  1. **Pre-rename safety check**: Renames any unrenamed files from ALL previous exports (handles upgrades from old versions)
+  2. Scans destination directory to get all existing message IDs from renamed files (e.g., "12345.jpg" -> ID 12345)
+  3. Parses export JSON to identify which message IDs are already downloaded
+  4. Creates a filtered temp JSON containing ONLY undownloaded messages
+  5. Runs `tdl dl` on the filtered JSON (using `--continue` flag for resume support)
+  6. Renames newly downloaded files to message IDs
+- **No --skip-same flag**: Can't use it because renamed files don't match original filenames in export JSON
+- Message ID-based file naming provides guaranteed unique, chronological ordering
+- Database tracks download completion timestamps for precise incrementality and automatic retry
 
 **Windows-Specific Handling**
 - `tdl dl` command doesn't exit on Windows after completion
@@ -124,6 +166,7 @@ pip install -e .                          # Install as editable package (optiona
 **File Organization**
 - Exports: `./exports/{chat_id}/export_{timestamp}.json`
 - Downloads: `./downloads/{chat_id}/` (if `organize_by_chat: true`)
+- File naming: `{message_id}.{ext}` (if `rename_by_timestamp: true`) - IDs are chronological and unique
 - Logs: `./logs/download_{id}.log`
 - Database: `./tdl_wrapper.db` (SQLite)
 
@@ -162,6 +205,7 @@ Key settings:
 - `scheduler.cron_schedule`: Global cron expression for batch runs (default: `'0 */6 * * *'`)
 - `scheduler.enabled`: Enable/disable scheduler
 - `downloads.organize_by_chat`: Create per-chat subdirectories
+- `downloads.rename_by_timestamp`: Rename files to Unix timestamps with duplicate handling (default: `true`)
 - `exports.include_content`: Include message text in exports
 - `discord.*`: Notification settings
 

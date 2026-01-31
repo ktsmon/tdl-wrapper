@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from rich.console import Console
 
 from .database import Database, Download, Export, Chat, Schedule, JobLog
@@ -45,9 +46,28 @@ class TDLScheduler:
             timezone=config.get('timezone', 'UTC')
         )
 
+        # Add event listeners for debugging
+        self.scheduler.add_listener(self._job_executed_listener, EVENT_JOB_EXECUTED)
+        self.scheduler.add_listener(self._job_error_listener, EVENT_JOB_ERROR)
+        self.scheduler.add_listener(self._job_missed_listener, EVENT_JOB_MISSED)
+
         # Thread safety for job execution
         self._running_jobs = set()  # Track running jobs to prevent overlaps
         self._lock = threading.Lock()
+
+    def _job_executed_listener(self, event):
+        """Called when a job is successfully executed."""
+        print(f"[SCHEDULER] Job executed: {event.job_id}", flush=True)
+
+    def _job_error_listener(self, event):
+        """Called when a job raises an exception."""
+        print(f"[SCHEDULER] Job error: {event.job_id} - {event.exception}", flush=True)
+        import traceback
+        traceback.print_exception(type(event.exception), event.exception, event.exception.__traceback__)
+
+    def _job_missed_listener(self, event):
+        """Called when a job's execution is missed."""
+        print(f"[SCHEDULER] Job MISSED: {event.job_id} - scheduled run time was missed!", flush=True)
 
     def start(self):
         """Start the scheduler and create per-chat jobs."""
@@ -58,17 +78,23 @@ class TDLScheduler:
         # Auto-sync chats on startup
         self._ensure_chats_synced()
 
+        # Clean up stale "running" jobs from previous crashed/terminated sessions
+        self._cleanup_stale_jobs()
+
         # Initialize schedules and create jobs
         self._initialize_schedules()
         self._create_all_jobs()
 
         self.scheduler.start()
+        print("[SCHEDULER] BackgroundScheduler started", flush=True)
         console.print("[green]OK Scheduler started[/green]")
         console.print(f"[dim]Default interval: {self.config.get('default_interval', '1h')}[/dim]")
 
-        # Print job summary
+        # Print job summary with details
         jobs = self.scheduler.get_jobs()
         console.print(f"[dim]Active jobs: {len(jobs)}[/dim]")
+        for job in jobs:
+            print(f"[SCHEDULER] Job '{job.id}' next run: {job.next_run_time}", flush=True)
 
     def stop(self):
         """Stop the scheduler."""
@@ -184,6 +210,24 @@ class TDLScheduler:
         finally:
             session.close()
 
+    def _cleanup_stale_jobs(self):
+        """Clean up stale 'running' job logs from previous crashed/terminated sessions."""
+        session = self.db.get_session()
+        try:
+            stale_jobs = session.query(JobLog).filter_by(status='running').all()
+            if stale_jobs:
+                console.print(f"[yellow]Cleaning up {len(stale_jobs)} stale 'running' job logs from previous session...[/yellow]")
+                for job in stale_jobs:
+                    job.status = 'failed'
+                    job.error_message = 'Job interrupted by scheduler restart or crash'
+                    if job.started_at and not job.completed_at:
+                        job.completed_at = datetime.datetime.utcnow()
+                        job.duration_seconds = (job.completed_at - job.started_at).total_seconds()
+                session.commit()
+                console.print(f"[green]OK Marked {len(stale_jobs)} stale jobs as failed[/green]")
+        finally:
+            session.close()
+
     def _initialize_schedules(self):
         """Create Schedule records for chats that don't have them."""
         session = self.db.get_session()
@@ -262,38 +306,75 @@ class TDLScheduler:
             # Calculate next run time
             next_run = trigger.get_next_fire_time(None, datetime.datetime.now(trigger.timezone))
 
-            # Get all enabled schedules and group by job type
+            # Get all enabled schedules and update their next_run_time
             enabled_schedules = session.query(Schedule).filter_by(is_enabled=True).all()
 
-            sync_chats = []
-            download_chats = []
+            sync_count = 0
+            download_count = 0
 
             for schedule in enabled_schedules:
                 # Update next_run_time in database
                 schedule.next_run_time = next_run
 
                 if schedule.job_type == 'sync':
-                    sync_chats.append(schedule.chat_id)
+                    sync_count += 1
                 elif schedule.job_type == 'download':
-                    download_chats.append(schedule.chat_id)
+                    download_count += 1
 
             session.commit()
 
-            # Create a single batch job that runs sync then download
-            # This prevents race conditions by ensuring sync completes before download
-            if sync_chats or download_chats:
-                self.scheduler.add_job(
-                    lambda: self._run_batch_sync_and_download(sync_chats, download_chats),
-                    trigger=trigger,
-                    id='global_batch_job',
-                    name='Global Batch Job',
-                    replace_existing=True
-                )
-                console.print(f"[green]OK Created global batch job for {len(sync_chats)} sync + {len(download_chats)} download[/green]")
+            # Always create the batch job - it will dynamically query enabled chats at runtime
+            # This ensures the job runs even if chats are enabled/disabled after startup
+            self.scheduler.add_job(
+                self._run_scheduled_batch_job,  # No lambda - queries DB at runtime
+                trigger=trigger,
+                id='global_batch_job',
+                name='Global Batch Job',
+                replace_existing=True
+            )
+            console.print(f"[green]OK Created global batch job ({sync_count} sync + {download_count} download enabled)[/green]")
 
             if next_run:
                 console.print(f"[dim]Next sync at: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}[/dim]")
 
+        finally:
+            session.close()
+
+    def _run_scheduled_batch_job(self):
+        """
+        Run the scheduled batch job by dynamically querying enabled chats.
+        This is called by the cron trigger and queries the database for current enabled schedules.
+        """
+        print(f"\n[SCHEDULER] >>> CRON JOB TRIGGERED at {datetime.datetime.now()} <<<", flush=True)
+
+        session = self.db.get_session()
+        try:
+            # Query current enabled schedules at runtime (not captured at job creation)
+            enabled_schedules = session.query(Schedule).filter_by(is_enabled=True).all()
+
+            sync_chats = []
+            download_chats = []
+
+            for schedule in enabled_schedules:
+                if schedule.job_type == 'sync':
+                    sync_chats.append(schedule.chat_id)
+                elif schedule.job_type == 'download':
+                    download_chats.append(schedule.chat_id)
+
+            print(f"[SCHEDULER] Found {len(sync_chats)} sync + {len(download_chats)} download enabled", flush=True)
+            console.print(f"\n[bold cyan]CRON: Batch job triggered - {len(sync_chats)} sync + {len(download_chats)} download[/bold cyan]")
+
+            if not sync_chats and not download_chats:
+                console.print("[yellow]No enabled schedules found, skipping batch job[/yellow]", flush=True)
+                return
+
+            # Run the batch job with current enabled chats
+            self._run_batch_sync_and_download(sync_chats, download_chats)
+
+        except Exception as e:
+            console.print(f"[red]Error in scheduled batch job: {e}[/red]", flush=True)
+            import traceback
+            traceback.print_exc()
         finally:
             session.close()
 
@@ -306,10 +387,13 @@ class TDLScheduler:
             sync_chat_ids: List of chat IDs to sync
             download_chat_ids: List of chat IDs to download
         """
+        import sys
+
         # Get unique chat IDs that need processing
         all_chat_ids = list(set(sync_chat_ids + download_chat_ids))
 
         console.print(f"\n[bold cyan]BATCH: Starting batch job for {len(all_chat_ids)} chats[/bold cyan]")
+        sys.stdout.flush()
 
         for chat_id in all_chat_ids:
             # Sync first if this chat needs syncing
@@ -329,6 +413,8 @@ class TDLScheduler:
             self._update_next_run_time_for_all('download')
 
         console.print(f"[bold green]OK Batch job completed[/bold green]\n")
+        import sys
+        sys.stdout.flush()
 
     def _run_batch_sync(self, chat_ids: list):
         """
@@ -608,9 +694,9 @@ class TDLScheduler:
                 console.print(f"[dim]No media to download for {chat.chat_name}[/dim]")
                 return
 
-            # Check if already downloaded
+            # Check if already downloaded successfully
             existing_download = session.query(Download)\
-                .filter_by(export_id=last_export.id)\
+                .filter_by(export_id=last_export.id, status='completed')\
                 .first()
 
             if existing_download:
@@ -761,12 +847,21 @@ class TDLScheduler:
                 return False
 
             schedule.is_enabled = True
+
+            # Update next_run_time based on current cron schedule
+            cron_schedule = self.config.get('cron_schedule', '0 */6 * * *')
+            try:
+                trigger = CronTrigger.from_crontab(cron_schedule)
+                next_run = trigger.get_next_fire_time(None, datetime.datetime.now(trigger.timezone))
+                schedule.next_run_time = next_run
+            except ValueError:
+                pass  # Keep existing next_run_time if cron is invalid
+
             session.commit()
 
-            # Create APScheduler job
-            self._create_job_for_schedule(schedule)
-
-            console.print(f"[green]OK Enabled {job_type} job for chat {chat_id}[/green]")
+            # Note: No need to create individual APScheduler jobs anymore
+            # The global batch job dynamically queries enabled schedules at runtime
+            console.print(f"[green]OK Enabled {job_type} for chat {chat_id}[/green]")
             return True
 
         finally:
@@ -793,15 +888,12 @@ class TDLScheduler:
                 return False
 
             schedule.is_enabled = False
+            schedule.next_run_time = None  # Clear next run time since disabled
             session.commit()
 
-            # Remove APScheduler job
-            try:
-                self.scheduler.remove_job(schedule.apscheduler_job_id)
-                console.print(f"[green]OK Disabled {job_type} job for chat {chat_id}[/green]")
-            except Exception as e:
-                console.print(f"[yellow]Job may not have been scheduled: {e}[/yellow]")
-
+            # Note: No need to remove individual APScheduler jobs anymore
+            # The global batch job dynamically queries enabled schedules at runtime
+            console.print(f"[green]OK Disabled {job_type} for chat {chat_id}[/green]")
             return True
 
         finally:

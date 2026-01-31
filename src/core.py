@@ -4,6 +4,7 @@ import json
 import subprocess
 import time
 import datetime
+import os
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from rich.console import Console
@@ -156,27 +157,41 @@ class TDLWrapper:
         chat: Chat,
         start_timestamp: Optional[int] = None,
         end_timestamp: Optional[int] = None,
-        output_file: Optional[str] = None
+        output_file: Optional[str] = None,
+        incremental: bool = True
     ) -> Optional[Export]:
         """
         Export messages from a chat.
 
         Args:
             chat: Chat instance from database
-            start_timestamp: Start time (Unix timestamp), defaults to 0 (1970)
+            start_timestamp: Start time (Unix timestamp), defaults to last export or 0
             end_timestamp: End time (Unix timestamp), defaults to now
             output_file: Custom output file path
+            incremental: If True, export only new messages since last successful export
 
         Returns:
             Export instance or None on failure
         """
-        # Determine time range - always do full export from 1970
-        # The downloader with --skip-same --continue handles incremental downloads
-        if start_timestamp is None:
-            start_timestamp = 0
-
+        # Determine time range
         if end_timestamp is None:
             end_timestamp = int(time.time())
+
+        if start_timestamp is None:
+            if incremental:
+                # Use last_successful_download_timestamp for true incrementality
+                # This handles cases where export succeeded but download failed
+                if chat.last_successful_download_timestamp:
+                    # Start from where we last successfully downloaded (add 1 to avoid duplicating last message)
+                    start_timestamp = chat.last_successful_download_timestamp + 1
+                    console.print(f"[dim]Incremental export from last download timestamp {start_timestamp}[/dim]")
+                else:
+                    # No successful downloads yet, start from the beginning
+                    start_timestamp = 0
+                    console.print(f"[dim]First download, starting from beginning[/dim]")
+            else:
+                # Full export from the beginning
+                start_timestamp = 0
 
         # Determine output file
         if output_file is None:
@@ -311,13 +326,17 @@ class TDLWrapper:
                 if destination is None:
                     chat = export.chat
                     if self.config['downloads'].get('organize_by_chat', True):
-                        destination = str(Path(self.config['downloads']['base_directory']) / chat.chat_id)
+                        # Use folder_name if set, otherwise fall back to chat_id
+                        folder = chat.folder_name if chat.folder_name else chat.chat_id
+                        destination = str(Path(self.config['downloads']['base_directory']) / folder)
                     else:
                         destination = self.config['downloads']['base_directory']
 
-                # Store export file path before closing session
+                # Store export metadata before closing session
                 export_file = export.output_file
                 export_id_final = export.id
+                export_end_timestamp = export.end_timestamp
+                chat_db_id = export.chat_id  # This is the database ID, not chat_id string
                 print(f"Export file: {export_file}", flush=True)
             finally:
                 session.close()
@@ -337,9 +356,53 @@ class TDLWrapper:
             existing_files, existing_size = self._count_downloaded_files(destination)
             print(f"Destination already has {existing_files} files ({existing_size} bytes)", flush=True)
 
-            # Build command - use --skip-same to avoid re-downloading
+            # IMPORTANT: Rename any existing unrenamed files BEFORE filtering
+            # This ensures the filter can properly detect what's already downloaded
+            # (necessary when upgrading from old versions or if previous renames failed)
+            if self.config['downloads'].get('rename_by_timestamp', True):
+                print("Pre-download: Checking for unrenamed files from previous downloads...", flush=True)
+                # Get all previous exports for this chat to catch any unrenamed files
+                session = self.db.get_session()
+                try:
+                    all_exports = session.query(Export)\
+                        .filter_by(chat_id=chat_db_id, status='completed')\
+                        .order_by(Export.export_timestamp.asc())\
+                        .all()
+
+                    if all_exports:
+                        print(f"Found {len(all_exports)} previous exports, checking for unrenamed files...", flush=True)
+                        total_renamed = 0
+                        for prev_export in all_exports:
+                            if Path(prev_export.output_file).exists():
+                                renamed = self._rename_files_by_timestamp(prev_export.output_file, destination)
+                                total_renamed += renamed
+
+                        if total_renamed > 0:
+                            print(f"Pre-download: Renamed {total_renamed} previously unrenamed files", flush=True)
+                        else:
+                            print("Pre-download: All existing files already renamed", flush=True)
+                finally:
+                    session.close()
+
+            # Filter export JSON to only include undownloaded files
+            # This is necessary because we rename files to message IDs, so --skip-same won't work
+            filtered_export_file = self._filter_export_for_download(export_file, destination)
+            if not filtered_export_file:
+                print("No new files to download (all files already exist)", flush=True)
+                # Mark download as completed even though nothing was downloaded
+                self.db.update_download_status(
+                    download_id,
+                    'completed',
+                    files_count=existing_files,
+                    total_size_bytes=existing_size,
+                    duration_seconds=0
+                )
+                return True
+
+            # Build command - use filtered export file and --continue for resume support
+            # Note: --skip-same removed because we pre-filter the JSON
             # Note: tdl hangs at the end, but our log monitoring will kill it after 10s of inactivity
-            args = ['dl', '-f', export_file, '-d', destination, '--skip-same', '--continue']
+            args = ['dl', '-f', filtered_export_file, '-d', destination, '--continue']
 
             # Setup log file for output
             log_dir = Path("logs")
@@ -355,13 +418,28 @@ class TDLWrapper:
             print(f"Output will be written to: {log_file}", flush=True)
             start_time = time.time()
 
-            # Run subprocess through cmd.exe to properly detach from console
+            # Run subprocess through cmd.exe on Windows to properly detach from console
             import os
 
-            # Build command line - run through cmd /c to avoid console attachment issues
-            cmd_line = f'cmd /c "{self.tdl_path}" {" ".join(args)} > "{log_file}" 2>&1'
+            # Build command line - platform-specific
+            if sys.platform == 'win32':
+                # Windows: use cmd /c to avoid console attachment issues
+                cmd_line = f'cmd /c "{self.tdl_path}" {" ".join(args)} > "{log_file}" 2>&1'
+            else:
+                # Linux/Docker: use bash -c
+                cmd_line = f'bash -c "{self.tdl_path} {" ".join(args)} > \\"{log_file}\\" 2>&1"'
 
             print(f"Running command: {cmd_line}", flush=True)
+
+            # Use CREATE_NEW_PROCESS_GROUP so we can kill the entire tree later
+            creationflags = 0
+            preexec_fn = None
+
+            if sys.platform == 'win32':
+                creationflags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                # On Linux, create a new process group so we can kill the entire tree
+                preexec_fn = os.setsid
 
             process = subprocess.Popen(
                 cmd_line,
@@ -369,7 +447,8 @@ class TDLWrapper:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                creationflags=creationflags,
+                preexec_fn=preexec_fn
             )
 
             # Monitor the log file to detect when tdl is done (it never exits on its own)
@@ -378,8 +457,21 @@ class TDLWrapper:
 
             last_log_size = 0
             idle_seconds = 0
-            max_idle = 10  # Kill after 10 seconds of no log activity
-            max_total = 300  # 5 minute absolute timeout
+
+            # Get timeout values from config (with fallback to defaults)
+            max_idle = self.config['downloads'].get('timeout_idle_seconds', 10)
+            max_total = self.config['downloads'].get('timeout_total_seconds', 300)
+
+            # Validate timeout values (defensive programming)
+            if not isinstance(max_idle, (int, float)) or max_idle < 1:
+                print(f"Warning: Invalid timeout_idle_seconds ({max_idle}), using default 10s", flush=True)
+                max_idle = 10
+            if not isinstance(max_total, (int, float)) or max_total < 1:
+                print(f"Warning: Invalid timeout_total_seconds ({max_total}), using default 300s", flush=True)
+                max_total = 300
+
+            # Log active timeout settings for transparency
+            print(f"Download timeouts: idle={max_idle}s, total={max_total}s", flush=True)
 
             for total_seconds in range(max_total):
                 returncode = process.poll()
@@ -401,9 +493,8 @@ class TDLWrapper:
                         idle_seconds += 1
                         if idle_seconds >= max_idle:
                             print(f"No log activity for {idle_seconds}s, download appears complete", flush=True)
-                            print(f"Killing tdl process (it doesn't exit on its own)...", flush=True)
-                            process.kill()
-                            process.wait()
+                            print(f"Killing tdl process tree (it doesn't exit on its own)...", flush=True)
+                            self._kill_process_tree(process)
                             returncode = 0  # Treat as success
                             break
                 except Exception as e:
@@ -411,9 +502,8 @@ class TDLWrapper:
 
                 time.sleep(1)
             else:
-                print(f"Download timed out after {max_total}s, killing process...", flush=True)
-                process.kill()
-                process.wait()
+                print(f"Download timed out after {max_total}s, killing process tree...", flush=True)
+                self._kill_process_tree(process)
                 returncode = -1
 
             duration = int(time.time() - start_time)
@@ -429,6 +519,13 @@ class TDLWrapper:
 
             # tdl returns 0 on success (even if files are skipped)
             if result.returncode == 0:
+                # Rename files by timestamp if enabled
+                if self.config['downloads'].get('rename_by_timestamp', True):
+                    print("Renaming files by timestamp...", flush=True)
+                    # Use filtered_export_file since that's what was actually downloaded
+                    renamed = self._rename_files_by_timestamp(filtered_export_file, destination)
+                    print(f"Renamed {renamed} files", flush=True)
+
                 # Count downloaded files and calculate size
                 print(f"Counting files in {destination}...", flush=True)
                 files_count, total_size = self._count_downloaded_files(destination)
@@ -443,6 +540,27 @@ class TDLWrapper:
                     duration_seconds=duration
                 )
                 print(f"Download {download_id} marked as completed!", flush=True)
+
+                # Update chat's last_successful_download_timestamp
+                # Find the ACTUAL max timestamp from successfully downloaded files
+                print(f"Determining last successfully downloaded message timestamp...", flush=True)
+                max_downloaded_timestamp = self._get_max_downloaded_timestamp(export_file, destination)
+
+                if max_downloaded_timestamp:
+                    print(f"Updating chat last_successful_download_timestamp to {max_downloaded_timestamp}...", flush=True)
+                    session = self.db.get_session()
+                    try:
+                        from .database import Chat
+                        chat = session.query(Chat).filter_by(id=chat_db_id).first()
+                        if chat:
+                            chat.last_successful_download_timestamp = max_downloaded_timestamp
+                            session.commit()
+                            print(f"Updated chat download timestamp to {max_downloaded_timestamp}", flush=True)
+                    finally:
+                        session.close()
+                else:
+                    print(f"WARNING: Could not determine max downloaded timestamp, not updating chat", flush=True)
+
                 print(f"OK Download completed: {files_count} files ({total_size} bytes)", flush=True)
                 return True
             else:
@@ -496,6 +614,506 @@ class TDLWrapper:
         except Exception as e:
             console.print(f"[yellow]Warning: Could not count files: {e}[/yellow]")
             return 0, 0
+
+    def _get_max_downloaded_timestamp(self, export_file: str, destination: str) -> Optional[int]:
+        """
+        Get the maximum message timestamp from successfully downloaded files.
+
+        This is used to track incremental progress - we can only consider a message
+        "successfully downloaded" if its file actually exists on disk.
+
+        Args:
+            export_file: Path to export JSON file
+            destination: Directory containing downloaded files
+
+        Returns:
+            Maximum timestamp from downloaded messages, or None if no files found
+        """
+        try:
+            print(f"Scanning downloaded files to find max timestamp...", flush=True)
+
+            # Parse export file to get message metadata
+            with open(export_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Handle different JSON structures from tdl
+            if isinstance(data, dict):
+                messages = data.get('messages', [])
+            elif isinstance(data, list):
+                messages = data
+            else:
+                print("No messages found in export", flush=True)
+                return None
+
+            # Get list of downloaded files
+            dest_path = Path(destination)
+            downloaded_files = {}  # Map: filename -> full_path
+            for file_path in dest_path.rglob('*'):
+                if file_path.is_file():
+                    downloaded_files[file_path.name] = file_path
+
+            print(f"Found {len(downloaded_files)} downloaded files", flush=True)
+
+            if not downloaded_files:
+                print("No downloaded files found", flush=True)
+                return None
+
+            # Find max timestamp from messages that were actually downloaded
+            max_timestamp = None
+            matched_count = 0
+
+            for msg in messages:
+                # Get file info
+                file_field = msg.get('file')
+                if not file_field:
+                    continue
+
+                # Extract filename - handle both string and dict formats
+                if isinstance(file_field, str):
+                    original_name = file_field
+                elif isinstance(file_field, dict):
+                    original_name = file_field.get('name')
+                else:
+                    continue
+
+                if not original_name:
+                    continue
+
+                # Get message ID for matching
+                message_id = msg.get('id') or msg.get('ID')
+                if not message_id:
+                    continue
+
+                is_downloaded = False
+
+                # Check if file exists in three ways:
+                # 1. By message ID (renamed files): {message_id}.ext
+                # 2. By TDL prefix + original name: ends with original_name
+                # 3. By exact original name
+
+                # First, try to match by message ID (for renamed files)
+                for actual_filename in downloaded_files.keys():
+                    # Check if filename is the message ID (e.g., "497.mp4" for message_id 497)
+                    filename_without_ext = actual_filename.rsplit('.', 1)[0]
+                    # Handle collision suffixes like "497_1.mp4"
+                    if '_' in filename_without_ext:
+                        filename_without_ext = filename_without_ext.split('_')[0]
+
+                    if filename_without_ext == str(message_id):
+                        is_downloaded = True
+                        break
+
+                # If not found by message ID, try to match by original filename
+                if not is_downloaded:
+                    for actual_filename in downloaded_files.keys():
+                        if actual_filename.endswith(original_name):
+                            is_downloaded = True
+                            break
+
+                # If still not found, check exact match
+                if not is_downloaded and original_name in downloaded_files:
+                    is_downloaded = True
+
+                if is_downloaded:
+                    # Get timestamp (try multiple field names)
+                    timestamp = msg.get('date') or msg.get('Date') or msg.get('timestamp')
+                    if timestamp:
+                        if max_timestamp is None or timestamp > max_timestamp:
+                            max_timestamp = timestamp
+                        matched_count += 1
+
+            print(f"Matched {matched_count} downloaded files to messages", flush=True)
+            print(f"Max downloaded message timestamp: {max_timestamp}", flush=True)
+
+            return max_timestamp
+
+        except Exception as e:
+            print(f"Error determining max downloaded timestamp: {e}", flush=True)
+            import traceback
+            print(traceback.format_exc(), flush=True)
+            return None
+
+    def _filter_export_for_download(self, export_file: str, destination: str) -> Optional[str]:
+        """
+        Filter export JSON to only include messages with files that haven't been downloaded yet.
+
+        This is necessary because we rename files to message IDs, so tdl's --skip-same flag
+        won't work (it can't match renamed files against the export JSON).
+
+        Args:
+            export_file: Path to original export JSON file
+            destination: Directory containing already-downloaded files
+
+        Returns:
+            Path to filtered export JSON file, or None if all files already downloaded
+        """
+        try:
+            print(f"Filtering export to exclude already-downloaded files...", flush=True)
+
+            # Parse export file
+            with open(export_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Handle different JSON structures from tdl
+            if isinstance(data, dict):
+                messages = data.get('messages', [])
+                has_wrapper = True
+            elif isinstance(data, list):
+                messages = data
+                has_wrapper = False
+            else:
+                print("Unknown export format", flush=True)
+                return export_file  # Return original if we can't parse
+
+            print(f"Export contains {len(messages)} messages", flush=True)
+
+            # Get list of already-downloaded message IDs from destination directory
+            dest_path = Path(destination)
+            downloaded_message_ids = set()
+
+            if dest_path.exists():
+                for file_path in dest_path.rglob('*'):
+                    if file_path.is_file():
+                        # Extract message ID from filename (e.g., "12345.jpg" -> 12345)
+                        filename = file_path.name
+                        filename_without_ext = filename.rsplit('.', 1)[0]
+
+                        # Handle collision suffixes like "12345_1.jpg"
+                        if '_' in filename_without_ext:
+                            filename_without_ext = filename_without_ext.split('_')[0]
+
+                        # Try to parse as integer message ID
+                        try:
+                            msg_id = int(filename_without_ext)
+                            downloaded_message_ids.add(msg_id)
+                        except ValueError:
+                            # Not a message ID-based filename, skip
+                            pass
+
+            print(f"Found {len(downloaded_message_ids)} already-downloaded message IDs", flush=True)
+
+            # Filter messages to only include those with files NOT already downloaded
+            filtered_messages = []
+            skipped_count = 0
+
+            for msg in messages:
+                # Get message ID
+                message_id = msg.get('id') or msg.get('ID')
+
+                # Check if message has a file
+                file_field = msg.get('file')
+                has_file = bool(file_field)
+
+                if has_file and message_id and message_id in downloaded_message_ids:
+                    # File already downloaded, skip this message
+                    skipped_count += 1
+                    continue
+
+                # Include this message in filtered export
+                filtered_messages.append(msg)
+
+            print(f"Filtered: {len(filtered_messages)} messages to download ({skipped_count} already downloaded)", flush=True)
+
+            # If all files already downloaded, return None
+            if skipped_count > 0 and len(filtered_messages) == 0:
+                print("All files already downloaded!", flush=True)
+                return None
+
+            # If nothing was filtered out, use original file
+            if skipped_count == 0:
+                print("No files filtered, using original export", flush=True)
+                return export_file
+
+            # Create filtered export file
+            export_path = Path(export_file)
+            filtered_file = export_path.parent / f"filtered_{export_path.name}"
+
+            # Write filtered export
+            filtered_data = data.copy() if has_wrapper else filtered_messages
+            if has_wrapper:
+                filtered_data['messages'] = filtered_messages
+
+            with open(filtered_file, 'w', encoding='utf-8') as f:
+                json.dump(filtered_data, f, ensure_ascii=False, indent=2)
+
+            print(f"Created filtered export: {filtered_file}", flush=True)
+            return str(filtered_file)
+
+        except Exception as e:
+            print(f"Error filtering export: {e}", flush=True)
+            import traceback
+            print(traceback.format_exc(), flush=True)
+            # On error, return original file to avoid breaking downloads
+            return export_file
+
+    def _rename_files_by_timestamp(self, export_file: str, destination: str) -> int:
+        """
+        Rename downloaded files to use message IDs.
+
+        Args:
+            export_file: Path to export JSON file
+            destination: Directory containing downloaded files
+
+        Returns:
+            Number of files renamed
+        """
+        try:
+            print(f"Renaming files by message ID from export: {export_file}", flush=True)
+
+            # Parse export file to get message metadata
+            with open(export_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Handle different JSON structures from tdl
+            if isinstance(data, dict):
+                messages = data.get('messages', [])
+            elif isinstance(data, list):
+                messages = data
+            else:
+                print("No messages found in export", flush=True)
+                return 0
+
+            print(f"Export contains {len(messages)} total messages", flush=True)
+
+            # Debug: Check first message structure to understand field names
+            if messages and len(messages) > 0:
+                first_msg = messages[0]
+                print(f"Sample message keys: {list(first_msg.keys())}", flush=True)
+                if first_msg.get('file'):
+                    file_field = first_msg['file']
+                    print(f"Sample file field type: {type(file_field).__name__}", flush=True)
+                    if isinstance(file_field, dict):
+                        print(f"Sample file keys: {list(file_field.keys())}", flush=True)
+                    else:
+                        print(f"Sample file value: {file_field}", flush=True)
+
+            # Build mapping: filename -> message_id
+            file_to_id = {}
+            for msg in messages:
+                # Get file info from message
+                file_field = msg.get('file')
+                if not file_field:
+                    continue
+
+                # Extract filename - handle both string and dict formats
+                if isinstance(file_field, str):
+                    # File field is just the filename string
+                    original_name = file_field
+                elif isinstance(file_field, dict):
+                    # File field is a dict with metadata
+                    original_name = file_field.get('name')
+                else:
+                    print(f"Warning: Unknown file field type: {type(file_field)}", flush=True)
+                    continue
+
+                if not original_name:
+                    continue
+
+                # Get message ID (try both lowercase and uppercase)
+                message_id = msg.get('id') or msg.get('ID')
+                if not message_id:
+                    print(f"Warning: No message ID found for file {original_name}, skipping", flush=True)
+                    continue
+
+                # Store mapping
+                file_to_id[original_name] = message_id
+
+            print(f"Found {len(file_to_id)} files with message IDs in export", flush=True)
+
+            if len(file_to_id) == 0:
+                print("WARNING: No files with message IDs found in export. Check export format.", flush=True)
+                return 0
+
+            # Scan destination directory for files
+            dest_path = Path(destination)
+            downloaded_files = [f for f in dest_path.rglob('*') if f.is_file()]
+
+            print(f"Found {len(downloaded_files)} files in destination", flush=True)
+
+            # Track renamed files
+            renamed_count = 0
+            skipped_count = 0
+
+            for file_path in downloaded_files:
+                actual_filename = file_path.name
+
+                # TDL adds prefix: {chat_id}_{message_id}_{original_name}
+                # Try to match by checking if original_name is a suffix of actual_filename
+                matched_id = None
+                matched_original = None
+
+                for original_name, msg_id in file_to_id.items():
+                    # Check if the actual filename ends with the original name
+                    if actual_filename.endswith(original_name):
+                        matched_id = msg_id
+                        matched_original = original_name
+                        break
+
+                # If no match found, check exact match
+                if not matched_id and actual_filename in file_to_id:
+                    matched_id = file_to_id[actual_filename]
+                    matched_original = actual_filename
+
+                if not matched_id:
+                    print(f"No message ID mapping for: {actual_filename} (keeping original name)", flush=True)
+                    skipped_count += 1
+                    continue
+
+                message_id = matched_id
+
+                # Get file extension
+                file_ext = file_path.suffix
+
+                # Create new filename: {message_id}{ext}
+                new_name = f"{message_id}{file_ext}"
+                new_path = file_path.parent / new_name
+
+                # Handle collision (shouldn't happen since IDs are unique, but just in case)
+                collision_counter = 1
+                while new_path.exists() and new_path != file_path:
+                    new_name = f"{message_id}_{collision_counter}{file_ext}"
+                    new_path = file_path.parent / new_name
+                    collision_counter += 1
+
+                # Rename file
+                try:
+                    if new_path != file_path:
+                        file_path.rename(new_path)
+                        print(f"Renamed: {original_name} -> {new_name}", flush=True)
+                        renamed_count += 1
+                except Exception as e:
+                    print(f"Error renaming {original_name}: {e}", flush=True)
+
+            print(f"Renaming complete: {renamed_count} renamed, {skipped_count} skipped (no message ID)", flush=True)
+            return renamed_count
+
+        except Exception as e:
+            print(f"Error in timestamp renaming: {e}", flush=True)
+            import traceback
+            print(traceback.format_exc(), flush=True)
+            return 0
+
+    def _wait_for_database_unlock(self, max_wait: int = 10) -> bool:
+        """
+        Wait for TDL database to be unlocked by checking if we can access it.
+
+        Args:
+            max_wait: Maximum time to wait in seconds
+
+        Returns:
+            True if database is unlocked, False if timeout
+        """
+        # TDL always uses ~/.tdl (which is /root/.tdl in Docker)
+        # Don't use TDL_DATA_DIR env var as it points to the mount point, not the actual location
+        tdl_data_dir = os.path.expanduser('~/.tdl')
+        # TDL uses /data/default as the database file (not .db extension)
+        db_file = Path(tdl_data_dir) / 'data' / 'default'
+
+        if not db_file.exists():
+            # Database doesn't exist yet, so it's not locked
+            print(f"Database file not found: {db_file}, assuming unlocked", flush=True)
+            return True
+
+        print(f"Checking if TDL database is unlocked: {db_file}", flush=True)
+
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            try:
+                # Try to open the database file in exclusive mode
+                # If it's locked, this will fail
+                with open(db_file, 'r+b') as f:
+                    # Try to acquire an exclusive lock (platform-specific)
+                    if sys.platform == 'win32':
+                        import msvcrt
+                        try:
+                            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                            print("Database is unlocked and ready!", flush=True)
+                            return True
+                        except (IOError, OSError):
+                            # File is locked
+                            pass
+                    else:
+                        import fcntl
+                        try:
+                            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                            print("Database is unlocked and ready!", flush=True)
+                            return True
+                        except (IOError, OSError) as lock_error:
+                            # File is locked
+                            print(f"Database still locked (attempt {int(time.time() - start_time)}s)...", flush=True)
+            except Exception as e:
+                # Any error means we can try again
+                print(f"Error checking database lock: {e}", flush=True)
+
+            time.sleep(0.5)
+
+        print(f"Warning: Database still appears locked after {max_wait}s", flush=True)
+        return False
+
+    def _kill_process_tree(self, process: subprocess.Popen):
+        """
+        Kill a process and all its children on Windows.
+
+        Args:
+            process: The Popen process to kill
+        """
+        if sys.platform == 'win32':
+            # Use taskkill with /T flag to kill entire process tree
+            # /F forces termination, /T terminates child processes
+            try:
+                subprocess.run(
+                    ['taskkill', '/F', '/T', '/PID', str(process.pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5
+                )
+                print(f"Killed process tree with PID {process.pid}", flush=True)
+            except Exception as e:
+                print(f"Error killing process tree: {e}", flush=True)
+                # Fallback to regular kill
+                try:
+                    process.kill()
+                except:
+                    pass
+
+            # Wait for process to finish
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                print("Process didn't terminate within timeout", flush=True)
+        else:
+            # On Unix/Linux, kill entire process group to ensure child processes are terminated
+            try:
+                # Get the process group ID and kill entire group
+                import signal
+                pgid = os.getpgid(process.pid)
+                print(f"Killing process group {pgid} (includes PID {process.pid})", flush=True)
+                os.killpg(pgid, signal.SIGTERM)  # Try graceful termination first
+                time.sleep(0.5)
+
+                # Check if still alive, then force kill
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                    print(f"Force killed process group {pgid}", flush=True)
+                except ProcessLookupError:
+                    # Already dead
+                    print(f"Process group {pgid} already terminated", flush=True)
+                    pass
+            except Exception as e:
+                print(f"Error killing process group: {e}, falling back to process.kill()", flush=True)
+                process.kill()
+
+            # Wait for process to finish
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                print("Process didn't terminate within timeout", flush=True)
+
+        # Wait for database lock to be released
+        print("Waiting for database lock to be released...", flush=True)
+        self._wait_for_database_unlock(max_wait=10)
 
     def sync_chat(self, chat: Chat) -> bool:
         """

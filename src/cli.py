@@ -59,16 +59,21 @@ def sync_chats(ctx, filter):
 @click.option('--name', help='Chat name')
 @click.option('--type', help='Chat type (channel, group, user)')
 @click.option('--username', help='Chat username')
+@click.option('--folder-name', help='Custom folder name for downloads (defaults to chat_id)')
 @click.pass_context
-def add(ctx, chat_id, name, type, username):
+def add(ctx, chat_id, name, type, username, folder_name):
     """Add a chat to track."""
     db = ctx.obj['db']
 
     if not name:
         name = chat_id
 
-    chat = db.add_chat(chat_id, name, type, username)
+    chat = db.add_chat(chat_id, name, type, username, folder_name)
     console.print(f"[green]OK Added chat: {chat.chat_name} ({chat.chat_id})[/green]")
+    if folder_name:
+        console.print(f"[dim]Downloads will be saved to: downloads/{folder_name}[/dim]")
+    else:
+        console.print(f"[dim]Downloads will be saved to: downloads/{chat_id}[/dim]")
 
 
 @cli.command()
@@ -86,17 +91,20 @@ def list(ctx):
     table.add_column("ID", style="cyan")
     table.add_column("Name", style="green")
     table.add_column("Type", style="yellow")
+    table.add_column("Folder", style="dim")
     table.add_column("Last Checked", style="magenta")
     table.add_column("Active", style="blue")
 
     for chat in chats:
         last_checked = chat.last_checked.strftime('%Y-%m-%d %H:%M') if chat.last_checked else 'Never'
         active = "OK" if chat.is_active else "X"
+        folder = chat.folder_name if chat.folder_name else chat.chat_id
 
         table.add_row(
             chat.chat_id,
             chat.chat_name,
             chat.chat_type or 'Unknown',
+            folder,
             last_checked,
             active
         )
@@ -178,6 +186,30 @@ def sync(ctx, chat_id, sync_all):
 
 @cli.command()
 @click.argument('chat_id')
+@click.argument('folder_name')
+@click.pass_context
+def set_folder(ctx, chat_id, folder_name):
+    """Set custom folder name for a chat's downloads."""
+    db = ctx.obj['db']
+
+    chat = db.get_chat(chat_id)
+    if not chat:
+        console.print(f"[red]Chat not found: {chat_id}[/red]")
+        return
+
+    # Update the folder name
+    folder_name = folder_name.strip()
+    success = db.update_chat_folder(chat_id, folder_name if folder_name else None)
+
+    if success:
+        console.print(f"[green]OK Updated folder name for {chat.chat_name}[/green]")
+        console.print(f"[dim]Downloads will now be saved to: downloads/{folder_name or chat_id}[/dim]")
+    else:
+        console.print(f"[red]Failed to update folder name[/red]")
+
+
+@cli.command()
+@click.argument('chat_id')
 @click.pass_context
 def status(ctx, chat_id):
     """Show detailed status for a chat."""
@@ -192,6 +224,8 @@ def status(ctx, chat_id):
     console.print(f"\n[bold cyan]{chat.chat_name}[/bold cyan]")
     console.print(f"Chat ID: {chat.chat_id}")
     console.print(f"Type: {chat.chat_type or 'Unknown'}")
+    folder = chat.folder_name if chat.folder_name else chat.chat_id
+    console.print(f"Download Folder: downloads/{folder}")
     console.print(f"Added: {chat.added_at.strftime('%Y-%m-%d %H:%M:%S')}")
     console.print(f"Last Checked: {chat.last_checked.strftime('%Y-%m-%d %H:%M:%S') if chat.last_checked else 'Never'}")
     console.print(f"Active: {'Yes' if chat.is_active else 'No'}")
@@ -406,6 +440,93 @@ def reprocess(ctx, download):
             console.print(f"[bold green]OK Triggered {downloads_triggered} downloads[/bold green]")
         else:
             console.print(f"[dim]Use --download flag to also trigger downloads for exports with missing files[/dim]")
+
+    finally:
+        session.close()
+
+
+@cli.command()
+@click.argument('chat_id', required=False)
+@click.option('--all', '-a', is_flag=True, help='Rename files for all chats')
+@click.pass_context
+def rename(ctx, chat_id, all):
+    """Rename downloaded files using message IDs (e.g., 12345.jpg)."""
+    db = ctx.obj['db']
+    wrapper = ctx.obj['wrapper']
+    config = ctx.obj['config']
+
+    session = db.get_session()
+    try:
+        chats = []
+
+        if all:
+            # Get all chats
+            chats = session.query(Chat).filter_by(is_active=True).all()
+            if not chats:
+                console.print("[yellow]No active chats found.[/yellow]")
+                return
+            console.print(f"[cyan]Renaming files for {len(chats)} chats...[/cyan]\n")
+        elif chat_id:
+            # Get specific chat
+            chat = session.query(Chat).filter_by(chat_id=chat_id).first()
+            if not chat:
+                console.print(f"[red]Chat not found: {chat_id}[/red]")
+                return
+            chats = [chat]
+        else:
+            console.print("[red]Error: Specify a chat_id or use --all flag[/red]")
+            console.print("Usage: python -m src.cli rename <chat_id>")
+            console.print("       python -m src.cli rename --all")
+            return
+
+        total_renamed = 0
+        total_files = 0
+
+        for chat in chats:
+            console.print(f"[bold]Processing: {chat.chat_name} ({chat.chat_id})[/bold]")
+
+            # Get the most recent export
+            last_export = session.query(Export)\
+                .filter_by(chat_id=chat.id, status='completed')\
+                .order_by(Export.export_timestamp.desc())\
+                .first()
+
+            if not last_export:
+                console.print(f"  [yellow]No completed exports found, skipping[/yellow]")
+                continue
+
+            # Determine download destination
+            from pathlib import Path
+            if config['downloads'].get('organize_by_chat', True):
+                folder = chat.folder_name if chat.folder_name else chat.chat_id
+                destination = str(Path(config['downloads']['base_directory']) / folder)
+            else:
+                destination = config['downloads']['base_directory']
+
+            # Check if destination exists
+            dest_path = Path(destination)
+            if not dest_path.exists():
+                console.print(f"  [yellow]Download directory not found: {destination}[/yellow]")
+                continue
+
+            # Count files before rename
+            files_before = len([f for f in dest_path.rglob('*') if f.is_file()])
+            if files_before == 0:
+                console.print(f"  [yellow]No files found in {destination}[/yellow]")
+                continue
+
+            console.print(f"  Found {files_before} files")
+
+            # Rename files
+            try:
+                renamed_count = wrapper._rename_files_by_timestamp(last_export.output_file, destination)
+                console.print(f"  [green]OK Renamed {renamed_count} files[/green]\n")
+                total_renamed += renamed_count
+                total_files += files_before
+            except Exception as e:
+                console.print(f"  [red]Error: {e}[/red]\n")
+
+        console.print(f"[bold green]Complete! Renamed {total_renamed} of {total_files} total files[/bold green]")
 
     finally:
         session.close()

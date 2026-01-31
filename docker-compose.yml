@@ -1,0 +1,60 @@
+services:
+  tdl-wrapper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ktsmonn/tdl-wrapper:latest
+    container_name: tdl-wrapper
+    restart: unless-stopped
+
+    # Port mapping for web dashboard
+    ports:
+      - "5000:5000"
+
+    # Volume mappings for persistence and configuration
+    volumes:
+      # Configuration file (read-write to allow UI edits)
+      - ./config.yaml:/app/config.yaml
+
+      # Data directories (persistent storage)
+      - ./data/downloads:/data/downloads
+      - ./data/exports:/data/exports
+      - ./data/logs:/data/logs
+      - ./data/db:/data/db
+      - ./data/tdl:/root/.tdl  # TDL session and data (maps to default TDL location)
+
+    # Environment variables (can override config.yaml)
+    environment:
+      # Database path (stored in persistent volume)
+      - TDL_DB_PATH=/data/db/tdl_wrapper.db
+
+      # TDL data directory for session storage
+      - TDL_DATA_DIR=/data/tdl
+
+      # Discord webhook (optional - set your webhook URL)
+      # - TDL_DISCORD_WEBHOOK=https://discord.com/api/webhooks/...
+
+      # Web server host (0.0.0.0 to allow external access)
+      - WEB_HOST=0.0.0.0
+      - WEB_PORT=5000
+
+      #Timezone
+      - TZ=Asia/Bangkok
+
+    # Run web dashboard by default (change to daemon for scheduler mode)
+    command: python -m src.cli web
+
+    # Optional: resource limits
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '2'
+    #       memory: 2G
+    #     reservations:
+    #       cpus: '0.5'
+    #       memory: 512M
+
+# Optional: create a network
+networks:
+  default:
+    name: tdl-wrapper-network

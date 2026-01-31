@@ -26,7 +26,19 @@
       "Bash(git add:*)",
       "Bash(dir /s /b nul)",
       "Bash(powershell -Command \"Remove-Item -Path ''\\\\?\\\\C:\\\\Users\\\\pesto\\\\Documents\\\\Projects\\\\tdl-wrapper\\\\nul'' -Force\")",
-      "Bash(powershell -Command \"Remove-Item -LiteralPath ''.\\\\nul'' -Force\")"
+      "Bash(powershell -Command \"Remove-Item -LiteralPath ''.\\\\nul'' -Force\")",
+      "Bash(git commit:*)",
+      "Bash(git remote add:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "Bash(chmod +x C:UserspestoDocumentsProjectstdl-wrapperdocker-setup.sh)",
+      "Bash(dir)",
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)",
+      "Bash(cmd /c \"if not exist .env echo TDL_DISCORD_WEBHOOK= > .env\")",
+      "Bash(dir:*)",
+      "Bash(tdl chat export:*)",
+      "Bash(tdl dl:*)"
     ]
   }
 }

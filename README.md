@@ -4,7 +4,8 @@ Advanced state management wrapper for [tdl (Telegram Downloader)](https://github
 
 ## Features
 
-- **Incremental Downloads**: Skip already-downloaded files automatically using `tdl --skip-same`
+- **True Incremental Sync**: Each export starts from the last message timestamp, ensuring only NEW messages are downloaded (no duplicates, no re-downloads)
+- **Message ID-Based Naming**: Automatically rename downloaded files to their message IDs for perfect chronological organization
 - **Per-Chat Scheduling**: Enable/disable automated sync and download for each chat individually
 - **Cron-Based Scheduler**: Configurable global cron schedule (default: every 6 hours)
 - **Discord Notifications**: Real-time notifications for operations, new files, and errors
@@ -16,15 +17,21 @@ Advanced state management wrapper for [tdl (Telegram Downloader)](https://github
 ## Why TDL Wrapper?
 
 While `tdl` is excellent for downloading from Telegram, managing continuous downloads across multiple chats requires:
-- Tracking what was downloaded to avoid duplicates
-- Scheduling regular updates
-- Monitoring progress and history
-- Managing multiple chats efficiently
+- **True incrementality**: Only download NEW messages since last sync (not filename-based)
+- **Timestamp tracking**: Database tracks exact message ranges to prevent duplicates
+- **Scheduling**: Automated regular updates
+- **Monitoring**: Progress tracking and execution history
+- **Multi-chat management**: Efficient handling of multiple channels/groups
 
-TDL Wrapper solves these problems by adding a comprehensive state management layer on top of `tdl`.
+TDL Wrapper solves these problems by adding a comprehensive state management layer with timestamp-based incremental exports on top of `tdl`.
 
 ## Prerequisites
 
+### Docker Deployment (Recommended)
+- Docker and Docker Compose installed on your server
+- See [DOCKER.md](DOCKER.md) for complete Docker setup guide
+
+### Manual Installation
 1. **tdl CLI** installed and configured
    - Install: https://docs.iyear.me/tdl/getting-started/installation/
    - Login: `tdl login` (complete authentication)
@@ -32,6 +39,48 @@ TDL Wrapper solves these problems by adding a comprehensive state management lay
 2. **Python 3.8+**
 
 ## Installation
+
+### Option 1: Docker (Recommended for Production)
+
+**Quick setup on Debian/Ubuntu:**
+```bash
+# Clone the repository
+git clone <repository-url>
+cd tdl-wrapper
+
+# Copy example config
+cp config.example.yaml config.yaml
+# Edit config.yaml with your settings
+
+# Build and start containers
+docker-compose build
+docker-compose up -d
+
+# Authenticate with Telegram
+docker-compose exec tdl-wrapper tdl login
+```
+
+**Manual Docker setup:**
+```bash
+# Clone and navigate
+git clone <repository-url>
+cd tdl-wrapper
+
+# Create config and data directories
+cp config.docker.yaml config.yaml
+mkdir -p data/{downloads,exports,logs,db,tdl}
+
+# Build and authenticate
+docker-compose build
+docker-compose run --rm tdl-wrapper tdl login
+
+# Start the application
+docker-compose up -d
+```
+
+See [DOCKER.md](DOCKER.md) for detailed Docker documentation.
+
+### Option 2: Manual Installation
 
 ```bash
 # Clone the repository
@@ -178,23 +227,43 @@ python -m src.cli reprocess
 python -m src.cli reprocess --download
 ```
 
+#### Rename Downloaded Files
+
+Rename already downloaded files to use message IDs (chronological ordering):
+
+```bash
+# Rename files for a specific chat
+python -m src.cli rename <chat_id>
+
+# Rename files for all active chats
+python -m src.cli rename --all
+```
+
+This is useful if you downloaded files before enabling `rename_by_timestamp: true` in the config, or if you want to re-apply naming after fixing issues.
+
 ### How Incremental Sync Works
 
-TDL Wrapper uses `tdl`'s built-in `--skip-same` flag to handle incrementality:
+TDL Wrapper uses **timestamp-based incremental exports** combined with `tdl`'s `--skip-same` flag:
 
 1. **First Sync**: Exports all messages from the beginning of time
    ```
    Export: 0 → current_timestamp
-   Download: all media files
+   Download: all media files (with --skip-same --continue)
+   Tracks: last_successful_download_timestamp = max(downloaded file timestamps)
    ```
 
-2. **Second Sync**: Exports full range again, but only downloads new files
+2. **Second Sync**: Exports ONLY new messages since last successful download
    ```
-   Export: 0 → current_timestamp (full export)
-   Download: only files not already present (--skip-same)
+   Export: last_successful_download_timestamp+1 → current_timestamp
+   Download: only new files (with --skip-same --continue for safety)
+   Tracks: updates last_successful_download_timestamp
    ```
 
-This ensures the export JSON is always complete while avoiding duplicate downloads.
+**Key Features:**
+- **True incrementality**: Only new messages are exported and downloaded
+- **Failure recovery**: If download fails, next sync re-exports those messages
+- **No duplicates**: `--skip-same` prevents re-downloading files that already exist
+- **Resume capability**: `--continue` allows resuming interrupted downloads
 
 ### Automated Scheduling
 
@@ -320,8 +389,8 @@ database:
 # Download settings
 downloads:
   base_directory: "./downloads"
-  skip_existing: true
   organize_by_chat: true  # Create subdirectory for each chat
+  rename_by_timestamp: true  # Rename files to message ID (e.g., 12345.jpg, 67890.mp4) for chronological ordering
 
 # Export settings
 exports:
@@ -408,14 +477,17 @@ tdl-wrapper/
 │       ├── app.py          # Flask web application
 │       └── templates/
 │           └── dashboard.html
-├── config.yaml             # Configuration file
+├── data/                   # Persistent data (Docker volume)
+│   ├── db/                 # SQLite database
+│   ├── downloads/          # Downloaded files
+│   ├── exports/            # Export JSON files
+│   ├── logs/               # Operation logs
+│   └── tdl/                # TDL session data
+├── config.yaml             # Configuration file (created from example)
 ├── config.example.yaml     # Example configuration
-├── requirements.txt        # Python dependencies
-├── setup.py                # Package setup
-├── tdl_wrapper.db          # SQLite database (created on first run)
-├── downloads/              # Downloaded files (organized by chat)
-├── exports/                # Export JSON files (organized by chat)
-└── logs/                   # Download operation logs
+├── docker-compose.yml      # Docker Compose configuration
+├── Dockerfile              # Docker image definition
+└── requirements.txt        # Python dependencies
 ```
 
 ## Database Schema

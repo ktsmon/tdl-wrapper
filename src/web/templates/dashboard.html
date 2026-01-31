@@ -16,6 +16,241 @@
             background: #f5f7fa;
             color: #2c3e50;
             line-height: 1.6;
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        /* Dark Mode Styles */
+        body.dark-mode {
+            background: #1a1a2e;
+            color: #eaeaea;
+        }
+
+        body.dark-mode .stat-card,
+        body.dark-mode .card {
+            background: #16213e;
+            color: #eaeaea;
+        }
+
+        body.dark-mode .stat-card:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+        }
+
+        body.dark-mode .stat-card h3 {
+            color: #a8a8a8;
+        }
+
+        body.dark-mode .stat-card .value {
+            color: #eaeaea;
+        }
+
+        body.dark-mode .card-header {
+            background: #0f1620;
+            border-bottom: 1px solid #2c3e50;
+        }
+
+        body.dark-mode thead {
+            background: #0f1620;
+        }
+
+        body.dark-mode th {
+            color: #a8a8a8;
+        }
+
+        body.dark-mode td {
+            border-bottom: 1px solid #2c3e50;
+        }
+
+        body.dark-mode tr:hover {
+            background: #0f1620;
+        }
+
+        body.dark-mode .tab {
+            background: #16213e;
+            color: #eaeaea;
+        }
+
+        body.dark-mode .tab.active {
+            background: #667eea;
+            color: white;
+        }
+
+        body.dark-mode input[type="text"] {
+            background: #0f1620;
+            border-color: #2c3e50;
+            color: #eaeaea;
+        }
+
+        body.dark-mode .badge-success {
+            background: #1e5631;
+            color: #7cdf90;
+        }
+
+        body.dark-mode .badge-warning {
+            background: #5c4a1f;
+            color: #ffd966;
+        }
+
+        body.dark-mode .badge-danger {
+            background: #5c1f1f;
+            color: #ff8080;
+        }
+
+        body.dark-mode .badge-info {
+            background: #1f3a5c;
+            color: #80c0ff;
+        }
+
+        body.dark-mode .badge-secondary {
+            background: #2c2c2c;
+            color: #b0b0b0;
+        }
+
+        body.dark-mode .btn-primary {
+            background: #5568d3;
+        }
+
+        body.dark-mode .btn-primary:hover {
+            background: #667eea;
+        }
+
+        body.dark-mode .btn-success {
+            background: #1e7e34;
+        }
+
+        body.dark-mode .btn-success:hover {
+            background: #28a745;
+        }
+
+        body.dark-mode #activity-banner {
+            background: linear-gradient(135deg, #5568d3 0%, #6a4ba2 100%);
+        }
+
+        body.dark-mode code {
+            background: #0f1620;
+            color: #80c0ff;
+        }
+
+        /* Button dark mode */
+        body.dark-mode .btn {
+            background: #2c3e50;
+            color: #eaeaea;
+        }
+
+        body.dark-mode .btn:hover {
+            background: #3a4f66;
+        }
+
+        body.dark-mode .btn-primary {
+            background: #5568d3;
+            color: #eaeaea;
+        }
+
+        body.dark-mode .btn-primary:hover {
+            background: #667eea;
+        }
+
+        body.dark-mode .btn:disabled {
+            opacity: 0.5;
+        }
+
+        /* Modal dark mode */
+        body.dark-mode #chat-details-modal {
+            background: rgba(0,0,0,0.8);
+        }
+
+        body.dark-mode #chat-details-modal > div {
+            background: #16213e !important;
+        }
+
+        body.dark-mode #chat-details-modal h2,
+        body.dark-mode #chat-details-modal h3 {
+            color: #eaeaea;
+        }
+
+        body.dark-mode #chat-details-modal table {
+            color: #eaeaea;
+        }
+
+        body.dark-mode #chat-details-modal button {
+            background: #2c3e50;
+            color: #eaeaea;
+            border: none;
+        }
+
+        body.dark-mode #chat-details-modal button:hover {
+            background: #3a4f66;
+        }
+
+        body.dark-mode #chat-details-modal .card {
+            background: #1a2332;
+        }
+
+        body.dark-mode #chat-details-modal .card-header {
+            background: #0f1620;
+            border-bottom-color: #2c3e50;
+        }
+
+        body.dark-mode #chat-details-modal .card-body {
+            background: #1a2332;
+        }
+
+        body.dark-mode #chat-details-modal td {
+            border-bottom-color: #2c3e50;
+        }
+
+        body.dark-mode #chat-details-modal thead {
+            background: #0f1620;
+        }
+
+        /* Cron examples dark mode - override inline styles */
+        body.dark-mode div[style*="background: #f8f9fa"] {
+            background: #0f1620 !important;
+        }
+
+        body.dark-mode code[style*="background: white"],
+        body.dark-mode code {
+            background: #0f1620 !important;
+            color: #80c0ff !important;
+        }
+
+        body.dark-mode strong {
+            color: #eaeaea;
+        }
+
+        body.dark-mode input[type="text"] {
+            background: #0f1620;
+            color: #eaeaea;
+            border-color: #2c3e50;
+        }
+
+        body.dark-mode input[type="text"]::placeholder {
+            color: #7f8c8d;
+        }
+
+        body.dark-mode label {
+            color: #eaeaea;
+        }
+
+        /* Recommendation box dark mode */
+        body.dark-mode .recommendation-box {
+            background: #3a3a1a !important;
+            border-left-color: #d4a017 !important;
+            color: #f0e68c;
+        }
+
+        body.dark-mode .recommendation-box strong {
+            color: #ffd966;
+        }
+
+        /* Number input dark mode */
+        body.dark-mode input[type="number"] {
+            background: #0f1620;
+            color: #eaeaea;
+            border-color: #2c3e50;
+        }
+
+        body.dark-mode input[type="number"]::placeholder {
+            color: #7f8c8d;
         }
 
         .container {
@@ -284,6 +519,18 @@
             transform: translateX(20px);
         }
 
+        /* Larger toggle for header */
+        .switch[style*="width: 60px"] .slider:before {
+            height: 22px;
+            width: 22px;
+            left: 4px;
+            bottom: 4px;
+        }
+
+        .switch[style*="width: 60px"] input:checked + .slider:before {
+            transform: translateX(30px);
+        }
+
         .toggle-container {
             display: inline-flex;
             align-items: center;
@@ -314,10 +561,28 @@
                     <h1>📥 TDL Wrapper Dashboard</h1>
                     <p>Real-time monitoring for Telegram downloads and exports</p>
                 </div>
-                <div id="countdown-widget" style="display: none; background: rgba(255,255,255,0.2); padding: 15px 25px; border-radius: 10px; text-align: center; min-width: 200px;">
-                    <div style="font-size: 0.85em; opacity: 0.9; margin-bottom: 5px;">Next Sync In</div>
-                    <div id="countdown-time" style="font-size: 1.8em; font-weight: 700; font-family: monospace;"></div>
-                    <div id="countdown-schedule" style="font-size: 0.75em; opacity: 0.8; margin-top: 5px;"></div>
+                <div style="display: flex; align-items: center; gap: 20px;">
+                    <div style="background: rgba(255,255,255,0.2); padding: 15px 25px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 0.85em; opacity: 0.9; margin-bottom: 8px;">Dark Mode</div>
+                        <label class="switch" style="width: 60px; height: 30px;" title="Toggle dark mode">
+                            <input type="checkbox" id="dark-mode-toggle" onchange="toggleDarkMode()">
+                            <span class="slider"></span>
+                        </label>
+                        <div style="font-size: 0.75em; opacity: 0.8; margin-top: 5px;">🌙</div>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.2); padding: 15px 25px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 0.85em; opacity: 0.9; margin-bottom: 8px;">Global Cron Sync</div>
+                        <label class="switch" style="width: 60px; height: 30px;" title="Enable/disable global scheduler">
+                            <input type="checkbox" id="global-scheduler-toggle" onchange="toggleGlobalScheduler()">
+                            <span class="slider"></span>
+                        </label>
+                        <div id="scheduler-status-text" style="font-size: 0.75em; opacity: 0.8; margin-top: 5px;">Loading...</div>
+                    </div>
+                    <div id="countdown-widget" style="display: none; background: rgba(255,255,255,0.2); padding: 15px 25px; border-radius: 10px; text-align: center; min-width: 200px;">
+                        <div style="font-size: 0.85em; opacity: 0.9; margin-bottom: 5px;">Next Sync In</div>
+                        <div id="countdown-time" style="font-size: 1.8em; font-weight: 700; font-family: monospace;"></div>
+                        <div id="countdown-schedule" style="font-size: 0.75em; opacity: 0.8; margin-top: 5px;"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -387,6 +652,7 @@
                                 <tr>
                                     <th>Name</th>
                                     <th>Type</th>
+                                    <th>Folder</th>
                                     <th>Last Export</th>
                                     <th>Last Download</th>
                                     <th>Status</th>
@@ -532,6 +798,67 @@
                         <div id="save-status" style="margin-top: 15px; display: none;"></div>
                     </div>
                 </div>
+
+                <!-- Download Timeout Settings Card -->
+                <div class="card" style="margin-top: 20px;">
+                    <div class="card-header">
+                        <h2>Download Timeout Settings</h2>
+                    </div>
+                    <div class="card-body">
+                        <div style="max-width: 800px;">
+                            <p style="color: #7f8c8d; margin-bottom: 20px;">
+                                Configure timeout behavior for download operations. Downloads are monitored via log file activity.
+                            </p>
+
+                            <div style="margin-bottom: 25px;">
+                                <h3 style="margin-bottom: 15px;">Idle Timeout</h3>
+                                <p style="color: #7f8c8d; font-size: 0.9em; margin-bottom: 10px;">
+                                    Kill download process after no log activity for this many seconds.
+                                    Longer values prevent premature termination of slow downloads.
+                                </p>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <input type="number" id="timeout-idle-input" min="5" max="300" step="1"
+                                           placeholder="10"
+                                           style="width: 120px; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 1em;">
+                                    <span style="color: #7f8c8d;">seconds</span>
+                                </div>
+                                <div style="font-size: 0.85em; color: #7f8c8d; margin-top: 5px;">
+                                    Valid range: 5-300 seconds (Default: 10)
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom: 25px;">
+                                <h3 style="margin-bottom: 15px;">Total Timeout</h3>
+                                <p style="color: #7f8c8d; font-size: 0.9em; margin-bottom: 10px;">
+                                    Maximum duration for any download operation, regardless of activity.
+                                    Prevents hung downloads from running indefinitely.
+                                </p>
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <input type="number" id="timeout-total-input" min="60" max="3600" step="10"
+                                           placeholder="300"
+                                           style="width: 120px; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 1em;">
+                                    <span style="color: #7f8c8d;">seconds</span>
+                                    <span style="color: #95a5a6; font-size: 0.9em;">(<span id="timeout-total-minutes">5</span> minutes)</span>
+                                </div>
+                                <div style="font-size: 0.85em; color: #7f8c8d; margin-top: 5px;">
+                                    Valid range: 60-3600 seconds (Default: 300 / 5 minutes)
+                                </div>
+                            </div>
+
+                            <div class="recommendation-box" style="background: #fff3cd; padding: 12px; border-left: 4px solid #ffc107; border-radius: 4px; margin-bottom: 20px;">
+                                <strong>💡 Recommendation:</strong> Keep idle timeout at 10-15 seconds for responsive detection.
+                                Increase total timeout (300-600s) for large files or slow connections.
+                            </div>
+
+                            <button class="btn btn-primary" onclick="saveDownloadTimeoutSettings()"
+                                    style="padding: 12px 30px; font-size: 1em; background: #667eea; border: none; border-radius: 5px; color: white; cursor: pointer; font-weight: 500;">
+                                💾 Save Timeout Settings
+                            </button>
+
+                            <div id="download-timeout-save-status" style="margin-top: 15px; display: none;"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -611,9 +938,19 @@
                     // Disable buttons if operation is running
                     const buttonsDisabled = isSyncing || isDownloading;
 
+                    // Get folder name (use chat_id if not set)
+                    const folderName = chat.folder_name || chat.chat_id;
+                    const folderDisplay = chat.folder_name ?
+                        `<span id="folder-display-${chat.id}">${folderName}</span>` :
+                        `<span id="folder-display-${chat.id}" style="color: #7f8c8d; font-style: italic;">${chat.chat_id}</span>`;
+
                     row.innerHTML = `
                         <td><strong>${chat.chat_name}</strong><br><small style="color: #7f8c8d;">${chat.chat_id}</small></td>
                         <td>${chat.chat_type || 'Unknown'}</td>
+                        <td>
+                            ${folderDisplay}
+                            <button class="btn btn-sm" onclick="editFolderName(${chat.id}, '${(chat.folder_name || '').replace(/'/g, "\\'")}', '${chat.chat_id}')" title="Edit folder name" style="margin-left: 5px; padding: 2px 8px; font-size: 0.75em;">✏️</button>
+                        </td>
                         <td>${lastExport}</td>
                         <td>${lastDownload}</td>
                         <td>${statusBadge}</td>
@@ -635,6 +972,7 @@
                             <br>
                             <button class="btn btn-primary btn-sm" onclick="triggerSyncJob(${chat.id})" title="Sync now" ${buttonsDisabled ? 'disabled' : ''}>⚡ Sync Now</button>
                             <button class="btn btn-success btn-sm" onclick="triggerDownloadJob(${chat.id})" title="Download now" ${buttonsDisabled ? 'disabled' : ''}>⚡ Download Now</button>
+                            <button class="btn btn-sm" onclick="renameFiles(${chat.id})" title="Rename downloaded files by message ID" ${buttonsDisabled ? 'disabled' : ''}>🏷️ Rename</button>
                             <button class="btn btn-sm" onclick="showChatDetails(${chat.id}, '${chat.chat_name.replace(/'/g, "\\'")}')">Details</button>
                         </td>
                     `;
@@ -866,6 +1204,68 @@
             }
         }
 
+        // Rename downloaded files
+        async function renameFiles(chatId) {
+            if (!confirm('Rename all downloaded files for this chat using message IDs?\n\nThis will rename files to their message ID (e.g., 12345.jpg) for chronological ordering.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/chat/${chatId}/rename_files`, { method: 'POST' });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`Success! ${result.message}\n\nRenamed: ${result.renamed_count}\nTotal files: ${result.total_files}`);
+                } else {
+                    alert('Error: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error renaming files: ' + error.message);
+            }
+        }
+
+        // Edit folder name
+        async function editFolderName(chatId, currentFolderName, defaultChatId) {
+            const newFolderName = prompt(
+                `Enter custom folder name for downloads:\n(Leave empty to use default: ${defaultChatId})`,
+                currentFolderName || ''
+            );
+
+            // User cancelled
+            if (newFolderName === null) return;
+
+            try {
+                const response = await fetch(`/api/chat/${chatId}/update_folder`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folder_name: newFolderName.trim() })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Update the display
+                    const displayElement = document.getElementById(`folder-display-${chatId}`);
+                    const finalFolder = result.folder_name || defaultChatId;
+                    displayElement.textContent = finalFolder;
+
+                    if (result.folder_name) {
+                        displayElement.style.color = '';
+                        displayElement.style.fontStyle = '';
+                    } else {
+                        displayElement.style.color = '#7f8c8d';
+                        displayElement.style.fontStyle = 'italic';
+                    }
+
+                    alert(result.message);
+                } else {
+                    alert('Error: ' + result.message);
+                }
+            } catch (error) {
+                alert('Error updating folder name: ' + error.message);
+            }
+        }
+
         // Load job logs
         async function loadJobLogs() {
             try {
@@ -1024,6 +1424,14 @@
         loadStats();
         loadChats();
         checkActivity(); // Check immediately
+        loadSchedulerConfig(); // Load scheduler config and update toggle
+        loadDownloadTimeoutConfig(); // Load download timeout config
+
+        // Add event listener for total timeout input to update minutes display
+        const totalInput = document.getElementById('timeout-total-input');
+        if (totalInput) {
+            totalInput.addEventListener('input', updateTotalTimeoutMinutes);
+        }
 
         // Check for activity every 5 seconds (will switch to fast polling if activity detected)
         setInterval(checkActivity, 5000);
@@ -1047,8 +1455,70 @@
                 // Update settings UI
                 document.getElementById('cron-input').value = schedulerConfig.cron_schedule || '0 */6 * * *';
 
+                // Update global toggle
+                const toggle = document.getElementById('global-scheduler-toggle');
+                const statusText = document.getElementById('scheduler-status-text');
+                toggle.checked = schedulerConfig.enabled;
+                statusText.textContent = schedulerConfig.enabled ? 'Enabled' : 'Disabled';
+
+                // Show/hide countdown based on enabled state
+                if (schedulerConfig.enabled) {
+                    loadCountdown();
+                } else {
+                    document.getElementById('countdown-widget').style.display = 'none';
+                    if (countdownInterval) {
+                        clearInterval(countdownInterval);
+                        countdownInterval = null;
+                    }
+                }
+
             } catch (error) {
                 console.error('Error loading scheduler config:', error);
+            }
+        }
+
+        async function toggleGlobalScheduler() {
+            const toggle = document.getElementById('global-scheduler-toggle');
+            const statusText = document.getElementById('scheduler-status-text');
+            const newState = toggle.checked;
+
+            statusText.textContent = 'Updating...';
+
+            try {
+                const response = await fetch('/api/scheduler/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: newState })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    statusText.textContent = newState ? 'Enabled' : 'Disabled';
+                    schedulerConfig.enabled = newState;
+
+                    // Reload countdown
+                    if (newState) {
+                        loadCountdown();
+                    } else {
+                        // Hide countdown widget
+                        document.getElementById('countdown-widget').style.display = 'none';
+                        if (countdownInterval) {
+                            clearInterval(countdownInterval);
+                            countdownInterval = null;
+                        }
+                    }
+                } else {
+                    // Revert toggle on error
+                    toggle.checked = !newState;
+                    statusText.textContent = !newState ? 'Enabled' : 'Disabled';
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                // Revert toggle on error
+                toggle.checked = !newState;
+                statusText.textContent = !newState ? 'Enabled' : 'Disabled';
+                alert('Error toggling scheduler: ' + error.message);
             }
         }
 
@@ -1070,10 +1540,95 @@
 
                 if (response.ok) {
                     saveStatus.innerHTML = '<div style="color: #28a745; padding: 10px; background: #d4edda; border-radius: 5px;">✓ Settings saved! Scheduler restarted successfully.</div>';
-                    schedulerConfig = { cron_schedule: cronSchedule };
 
-                    // Reload countdown
-                    loadCountdown();
+                    // Update only the cron_schedule, keep other properties like 'enabled'
+                    schedulerConfig.cron_schedule = cronSchedule;
+
+                    // Reload countdown after a short delay to allow scheduler to update
+                    setTimeout(() => {
+                        loadCountdown();
+                    }, 500);
+
+                    setTimeout(() => {
+                        saveStatus.style.display = 'none';
+                    }, 5000);
+                } else {
+                    saveStatus.innerHTML = `<div style="color: #dc3545; padding: 10px; background: #f8d7da; border-radius: 5px;">✗ Error: ${result.error}</div>`;
+                }
+            } catch (error) {
+                saveStatus.innerHTML = `<div style="color: #dc3545; padding: 10px; background: #f8d7da; border-radius: 5px;">✗ Error: ${error.message}</div>`;
+            }
+        }
+
+        // ===== Download Timeout Settings Functions =====
+        let downloadTimeoutConfig = null;
+
+        async function loadDownloadTimeoutConfig() {
+            try {
+                const response = await fetch('/api/downloads/timeout_config');
+                downloadTimeoutConfig = await response.json();
+
+                // Update UI inputs
+                document.getElementById('timeout-idle-input').value = downloadTimeoutConfig.timeout_idle_seconds;
+                document.getElementById('timeout-total-input').value = downloadTimeoutConfig.timeout_total_seconds;
+
+                // Update minutes display
+                updateTotalTimeoutMinutes();
+            } catch (error) {
+                console.error('Error loading download timeout config:', error);
+            }
+        }
+
+        function updateTotalTimeoutMinutes() {
+            const totalSeconds = parseInt(document.getElementById('timeout-total-input').value) || 300;
+            const minutes = (totalSeconds / 60).toFixed(1);
+            document.getElementById('timeout-total-minutes').textContent = minutes;
+        }
+
+        async function saveDownloadTimeoutSettings() {
+            const timeoutIdle = parseInt(document.getElementById('timeout-idle-input').value);
+            const timeoutTotal = parseInt(document.getElementById('timeout-total-input').value);
+
+            // Client-side validation
+            if (isNaN(timeoutIdle) || timeoutIdle < 5 || timeoutIdle > 300) {
+                alert('Idle timeout must be between 5 and 300 seconds');
+                return;
+            }
+
+            if (isNaN(timeoutTotal) || timeoutTotal < 60 || timeoutTotal > 3600) {
+                alert('Total timeout must be between 60 and 3600 seconds');
+                return;
+            }
+
+            if (timeoutTotal < timeoutIdle) {
+                alert('Total timeout must be greater than or equal to idle timeout');
+                return;
+            }
+
+            const saveStatus = document.getElementById('download-timeout-save-status');
+            saveStatus.style.display = 'block';
+            saveStatus.innerHTML = '<div style="color: #667eea;">⏳ Saving timeout settings...</div>';
+
+            try {
+                const response = await fetch('/api/downloads/timeout_config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        timeout_idle_seconds: timeoutIdle,
+                        timeout_total_seconds: timeoutTotal
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    saveStatus.innerHTML = '<div style="color: #28a745; padding: 10px; background: #d4edda; border-radius: 5px;">✓ Timeout settings saved! Changes will apply to new downloads.</div>';
+
+                    // Update cached config
+                    downloadTimeoutConfig = {
+                        timeout_idle_seconds: result.timeout_idle_seconds,
+                        timeout_total_seconds: result.timeout_total_seconds
+                    };
 
                     setTimeout(() => {
                         saveStatus.style.display = 'none';
@@ -1095,7 +1650,8 @@
                 const response = await fetch('/api/scheduler/next_run');
                 const data = await response.json();
 
-                if (data.next_run_time) {
+                // Only show countdown if scheduler is enabled AND there's a next run time
+                if (data.next_run_time && schedulerConfig && schedulerConfig.enabled) {
                     nextRunTime = new Date(data.next_run_time);
 
                     // Show widget
@@ -1110,8 +1666,12 @@
                     }
                     updateCountdown();
                 } else {
-                    // Hide widget if no schedule
+                    // Hide widget if no schedule or scheduler disabled
                     document.getElementById('countdown-widget').style.display = 'none';
+                    if (countdownInterval) {
+                        clearInterval(countdownInterval);
+                        countdownInterval = null;
+                    }
                 }
             } catch (error) {
                 console.error('Error loading countdown:', error);
@@ -1156,6 +1716,33 @@
         loadCountdown();
         // Refresh countdown data every 60 seconds to stay in sync
         setInterval(loadCountdown, 60000);
+
+        // ===== Dark Mode Functions =====
+        function toggleDarkMode() {
+            const toggle = document.getElementById('dark-mode-toggle');
+            const isDark = toggle.checked;
+
+            if (isDark) {
+                document.body.classList.add('dark-mode');
+                localStorage.setItem('darkMode', 'enabled');
+            } else {
+                document.body.classList.remove('dark-mode');
+                localStorage.setItem('darkMode', 'disabled');
+            }
+        }
+
+        function loadDarkModePreference() {
+            const darkMode = localStorage.getItem('darkMode');
+            const toggle = document.getElementById('dark-mode-toggle');
+
+            if (darkMode === 'enabled') {
+                document.body.classList.add('dark-mode');
+                toggle.checked = true;
+            }
+        }
+
+        // Load dark mode preference on page load
+        loadDarkModePreference();
     </script>
 </body>
 </html>

@@ -24,6 +24,19 @@ def create_app(config, db, wrapper, scheduler=None):
             print(f"[Web] Successfully imported {chat_count} chats")
         else:
             print(f"[Web] Found {chat_count} chats in database")
+
+        # Clean up stale "running" jobs from previous crashed/terminated sessions
+        stale_jobs = session.query(JobLog).filter_by(status='running').all()
+        if stale_jobs:
+            print(f"[Web] Cleaning up {len(stale_jobs)} stale 'running' job logs from previous session...")
+            for job in stale_jobs:
+                job.status = 'failed'
+                job.error_message = 'Job interrupted by container restart or crash'
+                if job.started_at and not job.completed_at:
+                    job.completed_at = datetime.datetime.utcnow()
+                    job.duration_seconds = (job.completed_at - job.started_at).total_seconds()
+            session.commit()
+            print(f"[Web] Marked {len(stale_jobs)} stale jobs as failed")
     finally:
         session.close()
 
@@ -117,6 +130,7 @@ def create_app(config, db, wrapper, scheduler=None):
                     'chat_id': chat.chat_id,
                     'chat_name': chat.chat_name,
                     'chat_type': chat.chat_type,
+                    'folder_name': chat.folder_name,
                     'is_active': chat.is_active,
                     'sync_enabled': chat.sync_enabled,
                     'download_enabled': chat.download_enabled,
@@ -209,13 +223,20 @@ def create_app(config, db, wrapper, scheduler=None):
 
             download_list = []
             for download in downloads:
+                # Detect stale downloads (running for more than 1 hour)
+                status = download.status
+                if status == 'running':
+                    download_age = datetime.datetime.utcnow() - download.download_timestamp
+                    if download_age > datetime.timedelta(hours=1):
+                        status = 'failed'
+
                 download_list.append({
                     'id': download.id,
                     'export_id': download.export_id,
                     'download_timestamp': download.download_timestamp.isoformat(),
                     'files_count': download.files_count,
                     'total_size_bytes': download.total_size_bytes,
-                    'status': download.status,
+                    'status': status,
                     'duration_seconds': download.duration_seconds,
                     'destination': download.destination
                 })
@@ -467,6 +488,30 @@ def create_app(config, db, wrapper, scheduler=None):
         finally:
             session.close()
 
+    @app.route('/api/chat/<int:chat_id>/update_folder', methods=['POST'])
+    def update_folder_name(chat_id):
+        """Update folder name for a chat."""
+        session = db.get_session()
+        try:
+            chat = session.query(Chat).filter_by(id=chat_id).first()
+            if not chat:
+                return jsonify({'error': 'Chat not found'}), 404
+
+            data = request.json
+            folder_name = data.get('folder_name', '').strip()
+
+            # Update folder name (empty string means use chat_id as default)
+            chat.folder_name = folder_name if folder_name else None
+            session.commit()
+
+            return jsonify({
+                'success': True,
+                'folder_name': chat.folder_name,
+                'message': f'Folder name updated to: {folder_name or chat.chat_id}'
+            })
+        finally:
+            session.close()
+
     @app.route('/api/chat/<int:chat_id>/job_logs')
     def get_job_logs_for_chat(chat_id):
         """Get job logs for a specific chat."""
@@ -545,6 +590,100 @@ def create_app(config, db, wrapper, scheduler=None):
             'timezone': config.get('scheduler.timezone', 'UTC')
         })
 
+    @app.route('/api/downloads/timeout_config')
+    def get_download_timeout_config():
+        """Get current download timeout configuration."""
+        return jsonify({
+            'timeout_idle_seconds': config.get('downloads.timeout_idle_seconds', 10),
+            'timeout_total_seconds': config.get('downloads.timeout_total_seconds', 300)
+        })
+
+    @app.route('/api/downloads/timeout_config', methods=['POST'])
+    def update_download_timeout_config():
+        """Update download timeout configuration."""
+        data = request.json
+
+        # Validate timeout_idle_seconds
+        if 'timeout_idle_seconds' in data:
+            timeout_idle = data['timeout_idle_seconds']
+            if not isinstance(timeout_idle, (int, float)):
+                return jsonify({'error': 'timeout_idle_seconds must be a number'}), 400
+            if timeout_idle < 5 or timeout_idle > 300:
+                return jsonify({'error': 'timeout_idle_seconds must be between 5 and 300'}), 400
+
+        # Validate timeout_total_seconds
+        if 'timeout_total_seconds' in data:
+            timeout_total = data['timeout_total_seconds']
+            if not isinstance(timeout_total, (int, float)):
+                return jsonify({'error': 'timeout_total_seconds must be a number'}), 400
+            if timeout_total < 60 or timeout_total > 3600:
+                return jsonify({'error': 'timeout_total_seconds must be between 60 and 3600'}), 400
+
+        # Cross-validation: total must be >= idle
+        idle = data.get('timeout_idle_seconds', config.get('downloads.timeout_idle_seconds', 10))
+        total = data.get('timeout_total_seconds', config.get('downloads.timeout_total_seconds', 300))
+        if total < idle:
+            return jsonify({'error': 'timeout_total_seconds must be >= timeout_idle_seconds'}), 400
+
+        # Update config
+        if 'timeout_idle_seconds' in data:
+            config.set('downloads.timeout_idle_seconds', int(data['timeout_idle_seconds']))
+        if 'timeout_total_seconds' in data:
+            config.set('downloads.timeout_total_seconds', int(data['timeout_total_seconds']))
+
+        # Save config to file
+        try:
+            config.save()
+        except Exception as e:
+            return jsonify({'error': f'Failed to save config: {str(e)}'}), 500
+
+        return jsonify({
+            'success': True,
+            'message': 'Download timeout settings saved successfully',
+            'timeout_idle_seconds': config.get('downloads.timeout_idle_seconds', 10),
+            'timeout_total_seconds': config.get('downloads.timeout_total_seconds', 300)
+        })
+
+    @app.route('/api/scheduler/toggle', methods=['POST'])
+    def toggle_scheduler():
+        """Enable or disable the global scheduler."""
+        if not scheduler:
+            return jsonify({'error': 'Scheduler not available'}), 503
+
+        data = request.json
+        enabled = data.get('enabled', True)
+
+        # Update config
+        config.set('scheduler.enabled', enabled)
+
+        # Save config to file
+        try:
+            config.save()
+        except Exception as e:
+            return jsonify({'error': f'Failed to save config: {str(e)}'}), 500
+
+        # Update scheduler's config dict
+        scheduler.config['enabled'] = enabled
+
+        # Start or stop scheduler based on enabled state
+        try:
+            if enabled:
+                # Reload jobs if enabling
+                print("[API] Enabling scheduler...")
+                scheduler.reload_jobs()
+            else:
+                # Remove all jobs if disabling
+                print("[API] Disabling scheduler...")
+                scheduler.scheduler.remove_all_jobs()
+        except Exception as e:
+            return jsonify({'error': f'Failed to update scheduler: {str(e)}'}), 500
+
+        return jsonify({
+            'success': True,
+            'enabled': enabled,
+            'message': f'Scheduler {"enabled" if enabled else "disabled"} successfully'
+        })
+
     @app.route('/api/scheduler/config', methods=['POST'])
     def update_scheduler_config():
         """Update scheduler configuration."""
@@ -585,6 +724,33 @@ def create_app(config, db, wrapper, scheduler=None):
             'message': 'Scheduler configuration updated and restarted'
         })
 
+    @app.route('/api/scheduler/debug')
+    def get_scheduler_debug():
+        """Debug endpoint to check scheduler status."""
+        if not scheduler:
+            return jsonify({'error': 'Scheduler not available'}), 503
+
+        jobs = scheduler.scheduler.get_jobs()
+        job_info = []
+        for job in jobs:
+            job_info.append({
+                'id': job.id,
+                'name': job.name,
+                'next_run_time': job.next_run_time.isoformat() if job.next_run_time else None,
+                'trigger': str(job.trigger)
+            })
+
+        return jsonify({
+            'scheduler_running': scheduler.scheduler.running,
+            'job_count': len(jobs),
+            'jobs': job_info,
+            'config': {
+                'enabled': scheduler.config.get('enabled', True),
+                'cron_schedule': scheduler.config.get('cron_schedule', '0 */6 * * *'),
+                'timezone': scheduler.config.get('timezone', 'UTC')
+            }
+        })
+
     @app.route('/api/scheduler/next_run')
     def get_next_run():
         """Get next scheduled run time for countdown timer."""
@@ -595,8 +761,10 @@ def create_app(config, db, wrapper, scheduler=None):
         jobs = scheduler.scheduler.get_jobs()
         if jobs:
             # Get the earliest next_run_time from active jobs
-            next_job = min(jobs, key=lambda j: j.next_run_time if j.next_run_time else datetime.datetime.max.replace(tzinfo=datetime.timezone.utc))
-            if next_job.next_run_time:
+            # Filter out jobs without next_run_time first to avoid AttributeError
+            jobs_with_next_run = [j for j in jobs if hasattr(j, 'next_run_time') and j.next_run_time]
+            if jobs_with_next_run:
+                next_job = min(jobs_with_next_run, key=lambda j: j.next_run_time)
                 return jsonify({
                     'next_run_time': next_job.next_run_time.isoformat(),
                     'cron_schedule': config.get('scheduler.cron_schedule', '0 */6 * * *')
@@ -622,6 +790,67 @@ def create_app(config, db, wrapper, scheduler=None):
                 'message': 'No scheduled jobs found'
             })
 
+        finally:
+            session.close()
+
+    @app.route('/api/chat/<int:chat_id>/rename_files', methods=['POST'])
+    def rename_chat_files(chat_id):
+        """Rename already downloaded files for a chat using message IDs."""
+        session = db.get_session()
+        try:
+            chat = session.query(Chat).filter_by(id=chat_id).first()
+            if not chat:
+                return jsonify({'success': False, 'message': 'Chat not found'}), 404
+
+            # Get the most recent export for this chat
+            last_export = session.query(Export)\
+                .filter_by(chat_id=chat_id, status='completed')\
+                .order_by(Export.export_timestamp.desc())\
+                .first()
+
+            if not last_export:
+                return jsonify({
+                    'success': False,
+                    'message': 'No completed exports found for this chat'
+                }), 400
+
+            # Determine download destination
+            from pathlib import Path
+            if config['downloads'].get('organize_by_chat', True):
+                folder = chat.folder_name if chat.folder_name else chat.chat_id
+                destination = str(Path(config['downloads']['base_directory']) / folder)
+            else:
+                destination = config['downloads']['base_directory']
+
+            # Check if destination exists
+            dest_path = Path(destination)
+            if not dest_path.exists():
+                return jsonify({
+                    'success': False,
+                    'message': f'Download directory not found: {destination}'
+                }), 400
+
+            # Count files before rename
+            files_before = len([f for f in dest_path.rglob('*') if f.is_file()])
+
+            # Call the rename function
+            renamed_count = wrapper._rename_files_by_timestamp(last_export.output_file, destination)
+
+            return jsonify({
+                'success': True,
+                'message': f'Renamed {renamed_count} of {files_before} files',
+                'renamed_count': renamed_count,
+                'total_files': files_before
+            })
+
+        except Exception as e:
+            import traceback
+            print(f"Error renaming files: {e}", flush=True)
+            print(traceback.format_exc(), flush=True)
+            return jsonify({
+                'success': False,
+                'message': f'Error: {str(e)}'
+            }), 500
         finally:
             session.close()
 

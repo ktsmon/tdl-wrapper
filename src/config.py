@@ -16,8 +16,10 @@ class Config:
         },
         'downloads': {
             'base_directory': './downloads',
-            'skip_existing': True,
-            'organize_by_chat': True
+            'organize_by_chat': True,
+            'rename_by_timestamp': True,     # Rename files using message timestamps
+            'timeout_idle_seconds': 10,      # Kill after X seconds of no log activity
+            'timeout_total_seconds': 300     # Absolute maximum timeout (5 minutes)
         },
         'exports': {
             'base_directory': './exports',
@@ -120,6 +122,17 @@ class Config:
         # Database path
         if 'TDL_DB_PATH' in os.environ:
             config['database']['path'] = os.environ['TDL_DB_PATH']
+
+        # TDL data directory (for session storage)
+        if 'TDL_DATA_DIR' in os.environ:
+            config['tdl_data_dir'] = os.environ['TDL_DATA_DIR']
+
+        # Web server configuration
+        if 'WEB_HOST' in os.environ:
+            config['web']['host'] = os.environ['WEB_HOST']
+
+        if 'WEB_PORT' in os.environ:
+            config['web']['port'] = int(os.environ['WEB_PORT'])
 
         return config
 

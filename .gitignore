@@ -30,19 +30,17 @@ ENV/
 *.db
 *.sqlite
 *.sqlite3
-tdl_wrapper.db
 
 # Logs
 *.log
-logs/
-
-# Downloads and exports
-downloads/
-exports/
 
 # Config (keep template)
 config.yaml
 !config.example.yaml
+
+# Docker
+.env
+data/
 
 # IDE
 .vscode/

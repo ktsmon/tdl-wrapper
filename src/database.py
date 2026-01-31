@@ -22,9 +22,13 @@ class Chat(Base):
     chat_name = Column(String, nullable=False)
     chat_type = Column(String)  # channel, group, user, etc.
     username = Column(String)  # @username if available
+    folder_name = Column(String)  # Custom folder name for downloads (defaults to chat_id if not set)
     added_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_checked = Column(DateTime)
     is_active = Column(Boolean, default=True)
+
+    # Download tracking - separate from export tracking for failure recovery
+    last_successful_download_timestamp = Column(BigInteger)  # Unix timestamp of last successfully downloaded message
 
     # Job configuration
     sync_enabled = Column(Boolean, default=False)
@@ -245,22 +249,39 @@ def migrate_to_per_chat_scheduler(engine):
             except Exception as e:
                 print(f"  Note: Error migrating schedule data: {e}")
 
-            # Add columns to chats table
-            chats_columns = [col['name'] for col in inspector.get_columns('chats')]
-            if 'sync_enabled' not in chats_columns:
-                try:
-                    conn.execute(text("ALTER TABLE chats ADD COLUMN sync_enabled BOOLEAN DEFAULT 0"))
-                    print("  OK Added sync_enabled to chats")
-                except Exception as e:
-                    print(f"  Note: sync_enabled column may already exist: {e}")
+        # Add columns to chats table (check independently from schedules migration)
+        chats_columns = [col['name'] for col in inspector.get_columns('chats')]
 
-            if 'download_enabled' not in chats_columns:
-                try:
-                    conn.execute(text("ALTER TABLE chats ADD COLUMN download_enabled BOOLEAN DEFAULT 0"))
-                    print("  OK Added download_enabled to chats")
-                except Exception as e:
-                    print(f"  Note: download_enabled column may already exist: {e}")
+        if 'sync_enabled' not in chats_columns:
+            try:
+                conn.execute(text("ALTER TABLE chats ADD COLUMN sync_enabled BOOLEAN DEFAULT 0"))
+                print("  OK Added sync_enabled to chats")
+            except Exception as e:
+                print(f"  Note: sync_enabled column may already exist: {e}")
 
+        if 'download_enabled' not in chats_columns:
+            try:
+                conn.execute(text("ALTER TABLE chats ADD COLUMN download_enabled BOOLEAN DEFAULT 0"))
+                print("  OK Added download_enabled to chats")
+            except Exception as e:
+                print(f"  Note: download_enabled column may already exist: {e}")
+
+        if 'folder_name' not in chats_columns:
+            try:
+                conn.execute(text("ALTER TABLE chats ADD COLUMN folder_name VARCHAR"))
+                print("  OK Added folder_name to chats")
+            except Exception as e:
+                print(f"  Note: folder_name column may already exist: {e}")
+
+        if 'last_successful_download_timestamp' not in chats_columns:
+            try:
+                conn.execute(text("ALTER TABLE chats ADD COLUMN last_successful_download_timestamp BIGINT"))
+                print("  OK Added last_successful_download_timestamp to chats")
+            except Exception as e:
+                print(f"  Note: last_successful_download_timestamp column may already exist: {e}")
+
+        # Only update existing chats if this is part of the main migration
+        if 'apscheduler_job_id' not in schedules_columns:
             # Update existing chats to have sync and download disabled by default
             try:
                 result = conn.execute(text("UPDATE chats SET sync_enabled = 0, download_enabled = 0 WHERE sync_enabled = 1 OR download_enabled = 1"))
@@ -296,7 +317,7 @@ class Database:
         return self.Session()
 
     def add_chat(self, chat_id: str, chat_name: str, chat_type: str = None,
-                 username: str = None) -> Chat:
+                 username: str = None, folder_name: str = None) -> Chat:
         """Add or update a chat in the database."""
         session = self.get_session()
         try:
@@ -307,12 +328,15 @@ class Database:
                     chat.chat_type = chat_type
                 if username:
                     chat.username = username
+                if folder_name is not None:
+                    chat.folder_name = folder_name
             else:
                 chat = Chat(
                     chat_id=chat_id,
                     chat_name=chat_name,
                     chat_type=chat_type,
-                    username=username
+                    username=username,
+                    folder_name=folder_name
                 )
                 session.add(chat)
             session.commit()
@@ -326,6 +350,19 @@ class Database:
         session = self.get_session()
         try:
             return session.query(Chat).filter_by(chat_id=chat_id).first()
+        finally:
+            session.close()
+
+    def update_chat_folder(self, chat_id: str, folder_name: str = None) -> bool:
+        """Update folder name for a chat."""
+        session = self.get_session()
+        try:
+            chat = session.query(Chat).filter_by(chat_id=chat_id).first()
+            if not chat:
+                return False
+            chat.folder_name = folder_name
+            session.commit()
+            return True
         finally:
             session.close()
 

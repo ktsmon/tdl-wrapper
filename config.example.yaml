@@ -6,17 +6,19 @@ tdl_path: "tdl"
 
 # Database configuration
 database:
-  path: "tdl_wrapper.db"
+  path: "tdl_wrapper.db"  # Docker: use /data/db/tdl_wrapper.db
 
 # Download settings
 downloads:
-  base_directory: "./downloads"
-  skip_existing: true
+  base_directory: "./downloads"  # Docker: use /data/downloads
   organize_by_chat: true  # Create subdirectory for each chat
+  rename_by_timestamp: true     # Rename files to message ID (e.g., 12345.jpg) for chronological ordering
+  timeout_idle_seconds: 10      # Kill download after X seconds of no log activity (5-300)
+  timeout_total_seconds: 300    # Maximum download duration in seconds (60-3600)
 
 # Export settings
 exports:
-  base_directory: "./exports"
+  base_directory: "./exports"  # Docker: use /data/exports
   include_content: true  # Include message text
   include_all: false     # Include non-media messages
 
