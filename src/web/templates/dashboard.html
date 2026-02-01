@@ -1644,11 +1644,15 @@
         // ===== Countdown Timer Functions =====
         let countdownInterval = null;
         let nextRunTime = null;
+        let isJobRunning = false;
 
         async function loadCountdown() {
             try {
                 const response = await fetch('/api/scheduler/next_run');
                 const data = await response.json();
+
+                // Track if a job is currently running
+                isJobRunning = data.is_running || false;
 
                 // Only show countdown if scheduler is enabled AND there's a next run time
                 if (data.next_run_time && schedulerConfig && schedulerConfig.enabled) {
@@ -1688,9 +1692,15 @@
             const diff = nextRunTime - now;
 
             if (diff <= 0) {
-                // Time's up, reload to get next run time
-                document.getElementById('countdown-time').textContent = 'Running...';
-                setTimeout(loadCountdown, 5000); // Wait 5 seconds then reload
+                // Time's up - show "Running..." only if job is actually running
+                if (isJobRunning) {
+                    document.getElementById('countdown-time').textContent = 'Running...';
+                    setTimeout(loadCountdown, 5000); // Check again in 5 seconds
+                } else {
+                    // Not running, just refresh to get next scheduled time
+                    document.getElementById('countdown-time').textContent = 'Updating...';
+                    setTimeout(loadCountdown, 1000); // Refresh quickly
+                }
                 return;
             }
 

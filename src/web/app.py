@@ -756,8 +756,15 @@ def create_app(config, db, wrapper, scheduler=None):
     @app.route('/api/scheduler/next_run')
     def get_next_run():
         """Get next scheduled run time for countdown timer."""
+        import datetime as dt
+
         if not scheduler:
             return jsonify({'error': 'Scheduler not available'}), 503
+
+        cron_schedule = config.get('scheduler.cron_schedule', '0 */6 * * *')
+
+        # Check if a job is currently running
+        is_running = len(scheduler._running_jobs) > 0
 
         # Priority: Use APScheduler jobs (always have correct timezone)
         jobs = scheduler.scheduler.get_jobs()
@@ -767,9 +774,24 @@ def create_app(config, db, wrapper, scheduler=None):
             jobs_with_next_run = [j for j in jobs if hasattr(j, 'next_run_time') and j.next_run_time]
             if jobs_with_next_run:
                 next_job = min(jobs_with_next_run, key=lambda j: j.next_run_time)
+                next_run = next_job.next_run_time
+
+                # If next_run is in the past (or within 2 seconds), calculate fresh next run
+                now = dt.datetime.now(next_run.tzinfo)
+                if (next_run - now).total_seconds() < 2:
+                    # Job is about to run or running, recalculate next occurrence
+                    from apscheduler.triggers.cron import CronTrigger
+                    try:
+                        trigger = CronTrigger.from_crontab(cron_schedule, timezone=scheduler.scheduler.timezone)
+                        # Get next run after now + 1 second buffer
+                        next_run = trigger.get_next_fire_time(None, now + dt.timedelta(seconds=1))
+                    except:
+                        pass  # Keep original next_run if recalculation fails
+
                 return jsonify({
-                    'next_run_time': next_job.next_run_time.isoformat(),
-                    'cron_schedule': config.get('scheduler.cron_schedule', '0 */6 * * *')
+                    'next_run_time': next_run.isoformat() if next_run else None,
+                    'cron_schedule': cron_schedule,
+                    'is_running': is_running
                 })
 
         # Fallback: Try database (may have naive datetimes)
@@ -783,12 +805,14 @@ def create_app(config, db, wrapper, scheduler=None):
             if schedule and schedule.next_run_time:
                 return jsonify({
                     'next_run_time': schedule.next_run_time.isoformat(),
-                    'cron_schedule': config.get('scheduler.cron_schedule', '0 */6 * * *')
+                    'cron_schedule': cron_schedule,
+                    'is_running': is_running
                 })
 
             return jsonify({
                 'next_run_time': None,
-                'cron_schedule': config.get('scheduler.cron_schedule', '0 */6 * * *'),
+                'cron_schedule': cron_schedule,
+                'is_running': is_running,
                 'message': 'No scheduled jobs found'
             })
 
