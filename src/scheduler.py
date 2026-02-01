@@ -9,6 +9,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED
+from tzlocal import get_localzone
 from rich.console import Console
 
 from .database import Database, Download, Export, Chat, Schedule, JobLog
@@ -43,11 +44,10 @@ class TDLScheduler:
         self.notifier = notifier
 
         # Use local/system timezone by default (set via TZ env var in Docker)
-        # If no timezone in config, use None to let APScheduler use local timezone
-        tz = config.get('timezone')
-        self.scheduler = BackgroundScheduler(
-            timezone=tz  # None = use system timezone
-        )
+        # If no timezone in config, explicitly get local timezone
+        tz = config.get('timezone') or get_localzone()
+        print(f"[SCHEDULER] Using timezone: {tz}", flush=True)
+        self.scheduler = BackgroundScheduler(timezone=tz)
 
         # Add event listeners for debugging
         self.scheduler.add_listener(self._job_executed_listener, EVENT_JOB_EXECUTED)
