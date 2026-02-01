@@ -3,6 +3,8 @@
 from flask import Flask, render_template, jsonify, request
 import humanize
 import datetime
+import os
+from pathlib import Path
 from sqlalchemy import func
 from tzlocal import get_localzone
 from ..database import Chat, Export, Download, Schedule, JobLog
@@ -71,14 +73,19 @@ def create_app(config, db, wrapper, scheduler=None):
             total_downloads = session.query(Download).count()
             completed_downloads = session.query(Download).filter_by(status='completed').count()
 
-            # Get total files and size
-            result = session.query(
-                func.sum(Download.files_count),
-                func.sum(Download.total_size_bytes)
-            ).filter_by(status='completed').first()
-
-            total_files = result[0] or 0
-            total_size = result[1] or 0
+            # Get total files and size by scanning actual downloads directory
+            # This gives accurate counts regardless of historical database issues
+            downloads_dir = Path(config.get('downloads', {}).get('base_directory', './downloads'))
+            total_files = 0
+            total_size = 0
+            if downloads_dir.exists():
+                for file_path in downloads_dir.rglob('*'):
+                    if file_path.is_file():
+                        total_files += 1
+                        try:
+                            total_size += file_path.stat().st_size
+                        except OSError:
+                            pass  # Skip files we can't stat
 
             return jsonify({
                 'total_chats': total_chats,
