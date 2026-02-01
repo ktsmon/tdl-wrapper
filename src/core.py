@@ -389,12 +389,12 @@ class TDLWrapper:
             filtered_export_file = self._filter_export_for_download(export_file, destination)
             if not filtered_export_file:
                 print("No new files to download (all files already exist)", flush=True)
-                # Mark download as completed even though nothing was downloaded
+                # Mark download as completed with 0 new files
                 self.db.update_download_status(
                     download_id,
                     'completed',
-                    files_count=existing_files,
-                    total_size_bytes=existing_size,
+                    files_count=0,
+                    total_size_bytes=0,
                     duration_seconds=0
                 )
                 return True
@@ -534,17 +534,19 @@ class TDLWrapper:
                     renamed = self._rename_files_by_timestamp(filtered_export_file, destination)
                     print(f"Renamed {renamed} files", flush=True)
 
-                # Count downloaded files and calculate size
+                # Count downloaded files and calculate NEW files (difference from before)
                 print(f"Counting files in {destination}...", flush=True)
-                files_count, total_size = self._count_downloaded_files(destination)
-                print(f"Found {files_count} files, {total_size} bytes", flush=True)
+                total_files, total_size = self._count_downloaded_files(destination)
+                new_files = total_files - existing_files
+                new_size = total_size - existing_size
+                print(f"Found {total_files} total files, {new_files} new files ({new_size} bytes)", flush=True)
 
                 print(f"Updating download {download_id} to completed...", flush=True)
                 self.db.update_download_status(
                     download_id,
                     'completed',
-                    files_count=files_count,
-                    total_size_bytes=total_size,
+                    files_count=new_files,
+                    total_size_bytes=new_size,
                     duration_seconds=duration
                 )
                 print(f"Download {download_id} marked as completed!", flush=True)

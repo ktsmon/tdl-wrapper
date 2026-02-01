@@ -206,3 +206,110 @@ class DiscordNotifier:
         embed.set_timestamp()
 
         self._send_webhook(embeds=[embed])
+
+    def notify_batch_complete(
+        self,
+        results: List[Dict[str, Any]],
+        total_duration_seconds: int
+    ):
+        """
+        Send a single summary notification for a batch job.
+
+        Args:
+            results: List of dicts with keys:
+                - chat_name: str
+                - chat_id: str
+                - export_status: 'success' | 'failed' | 'skipped'
+                - export_messages: int (or 0)
+                - download_status: 'success' | 'failed' | 'skipped' | None
+                - files_downloaded: int (actual new files)
+                - size_bytes: int
+                - error: str (if failed)
+            total_duration_seconds: Total batch duration
+        """
+        if not self.config.get('notify_batch_summary', True):
+            return
+
+        # Calculate summary stats
+        total_chats = len(results)
+        total_files = sum(r.get('files_downloaded', 0) for r in results)
+        total_bytes = sum(r.get('size_bytes', 0) for r in results)
+
+        # Determine overall status
+        failed_count = sum(1 for r in results if r.get('export_status') == 'failed' or r.get('download_status') == 'failed')
+
+        if failed_count == total_chats:
+            title = "[FAILED] Batch Failed"
+            color = 0xe74c3c  # Red
+        elif failed_count > 0:
+            title = "[WARN] Batch Complete (with errors)"
+            color = 0xf39c12  # Orange
+        else:
+            title = "[OK] Batch Complete"
+            color = 0x2ecc71  # Green
+
+        # Build summary description
+        duration_str = humanize.naturaldelta(datetime.timedelta(seconds=total_duration_seconds))
+        size_str = humanize.naturalsize(total_bytes) if total_bytes > 0 else "0 B"
+
+        description = f"**{total_chats} chats** synced in {duration_str}\n"
+        if total_files > 0:
+            description += f"**{total_files:,} new files** ({size_str})"
+        else:
+            description += "No new files"
+
+        embed = DiscordEmbed(
+            title=title,
+            description=description,
+            color=color
+        )
+
+        # Build per-chat results
+        result_lines = []
+        for r in results:
+            chat_name = r.get('chat_name', 'Unknown')
+            export_status = r.get('export_status', 'skipped')
+            download_status = r.get('download_status')
+            files = r.get('files_downloaded', 0)
+            size = r.get('size_bytes', 0)
+            error = r.get('error')
+
+            if export_status == 'failed':
+                line = f":x: **{chat_name}** - export failed"
+                if error:
+                    line += f": {error[:50]}"
+            elif download_status == 'failed':
+                line = f":x: **{chat_name}** - download failed"
+                if error:
+                    line += f": {error[:50]}"
+            elif files > 0:
+                size_str = humanize.naturalsize(size)
+                line = f":white_check_mark: **{chat_name}** - {files:,} files ({size_str})"
+            else:
+                line = f":white_check_mark: **{chat_name}** - no new media"
+
+            result_lines.append(line)
+
+        # Discord embed field limit is 1024 chars, so truncate if needed
+        results_text = '\n'.join(result_lines)
+        if len(results_text) > 1000:
+            # Truncate and indicate more results
+            truncated_lines = []
+            current_len = 0
+            for line in result_lines:
+                if current_len + len(line) + 1 > 950:
+                    truncated_lines.append(f"... and {len(result_lines) - len(truncated_lines)} more")
+                    break
+                truncated_lines.append(line)
+                current_len += len(line) + 1
+            results_text = '\n'.join(truncated_lines)
+
+        embed.add_embed_field(
+            name="Results",
+            value=results_text,
+            inline=False
+        )
+
+        embed.set_timestamp()
+
+        self._send_webhook(embeds=[embed])

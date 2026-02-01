@@ -399,16 +399,45 @@ class TDLScheduler:
         console.print(f"\n[bold cyan]BATCH: Starting batch job for {len(all_chat_ids)} chats[/bold cyan]")
         sys.stdout.flush()
 
+        batch_start_time = time.time()
+        batch_results = []
+
         for chat_id in all_chat_ids:
+            chat_result = {
+                'chat_name': None,
+                'chat_id': None,
+                'export_status': 'skipped',
+                'export_messages': 0,
+                'download_status': None,
+                'files_downloaded': 0,
+                'size_bytes': 0,
+                'error': None
+            }
+
             # Sync first if this chat needs syncing
             if chat_id in sync_chat_ids:
                 console.print(f"\n[bold cyan]Syncing chat {chat_id}...[/bold cyan]")
-                self.run_sync_job(chat_id, trigger='scheduled')
+                sync_result = self.run_sync_job(chat_id, trigger='scheduled', batch_mode=True)
+                chat_result['chat_name'] = sync_result.get('chat_name')
+                chat_result['chat_id'] = sync_result.get('chat_id')
+                chat_result['export_status'] = sync_result.get('export_status', 'skipped')
+                chat_result['export_messages'] = sync_result.get('export_messages', 0)
+                if sync_result.get('error'):
+                    chat_result['error'] = sync_result['error']
 
             # Then download if this chat needs downloading
             if chat_id in download_chat_ids:
                 console.print(f"[bold green]Downloading chat {chat_id}...[/bold green]")
-                self.run_download_job(chat_id, trigger='scheduled')
+                download_result = self.run_download_job(chat_id, trigger='scheduled', batch_mode=True)
+                chat_result['download_status'] = download_result.get('download_status', 'skipped')
+                chat_result['files_downloaded'] = download_result.get('files_downloaded', 0)
+                chat_result['size_bytes'] = download_result.get('size_bytes', 0)
+                if download_result.get('error'):
+                    chat_result['error'] = download_result['error']
+
+            # Only add to batch results if we have valid chat info
+            if chat_result['chat_name']:
+                batch_results.append(chat_result)
 
         # Update next_run_time for all processed schedules
         if sync_chat_ids:
@@ -417,8 +446,12 @@ class TDLScheduler:
             self._update_next_run_time_for_all('download')
 
         console.print(f"[bold green]OK Batch job completed[/bold green]\n")
-        import sys
         sys.stdout.flush()
+
+        # Send batch notification
+        batch_duration = int(time.time() - batch_start_time)
+        if self.notifier and batch_results:
+            self.notifier.notify_batch_complete(batch_results, batch_duration)
 
     def _run_batch_sync(self, chat_ids: list):
         """
@@ -508,21 +541,32 @@ class TDLScheduler:
             replace_existing=True
         )
 
-    def run_sync_job(self, chat_id: int, trigger: str = 'scheduled'):
+    def run_sync_job(self, chat_id: int, trigger: str = 'scheduled', batch_mode: bool = False) -> Dict[str, Any]:
         """
         Execute sync (export) job for a chat.
 
         Args:
             chat_id: Chat ID to sync
             trigger: 'scheduled' or 'manual'
+            batch_mode: If True, suppress notifications and return result dict
+
+        Returns:
+            Result dict with export status and stats (only meaningful in batch_mode)
         """
+        result = {
+            'chat_name': None,
+            'chat_id': None,
+            'export_status': 'skipped',
+            'export_messages': 0,
+            'error': None
+        }
         job_key = f"sync_{chat_id}"
 
         # Prevent overlapping jobs
         with self._lock:
             if job_key in self._running_jobs:
                 console.print(f"[yellow]Sync job for chat {chat_id} is already running[/yellow]")
-                return
+                return result
             self._running_jobs.add(job_key)
 
         session = self.db.get_session()
@@ -534,26 +578,21 @@ class TDLScheduler:
             chat = session.query(Chat).filter_by(id=chat_id).first()
             if not chat:
                 console.print(f"[red]Chat {chat_id} not found[/red]")
-                return
+                return result
+
+            # Populate result with chat info
+            result['chat_name'] = chat.chat_name
+            result['chat_id'] = chat.chat_id
 
             # Check if sync is enabled
             if not chat.sync_enabled and trigger == 'scheduled':
                 console.print(f"[dim]Sync disabled for {chat.chat_name}[/dim]")
-                return
+                return result
 
             console.print(f"\n[bold cyan]Syncing: {chat.chat_name}[/bold cyan]")
 
             # Create job log
             job_log = self.db.create_job_log(chat_id, 'sync', trigger)
-
-            # Notify start
-            if self.notifier and trigger == 'scheduled':
-                self.notifier.notify_chat_progress(
-                    chat.chat_name,
-                    chat.chat_id,
-                    'export',
-                    'started'
-                )
 
             # Export messages
             export = self.wrapper.export_messages(chat)
@@ -592,19 +631,9 @@ class TDLScheduler:
                     f"{messages_added} messages, {media_items_found} media ({duration}s)[/green]"
                 )
 
-                # Notify completion
-                if self.notifier and trigger == 'scheduled':
-                    self.notifier.notify_chat_progress(
-                        chat.chat_name,
-                        chat.chat_id,
-                        'export',
-                        'completed',
-                        {
-                            'message_count': messages_added,
-                            'media_count': media_items_found,
-                            'duration_seconds': duration
-                        }
-                    )
+                # Update result
+                result['export_status'] = 'success'
+                result['export_messages'] = messages_added
 
             else:
                 # Sync failed
@@ -619,13 +648,8 @@ class TDLScheduler:
 
                 console.print(f"[red]FAILED Failed to sync {chat.chat_name}[/red]")
 
-                if self.notifier:
-                    self.notifier.notify_chat_progress(
-                        chat.chat_name,
-                        chat.chat_id,
-                        'export',
-                        'failed'
-                    )
+                result['export_status'] = 'failed'
+                result['error'] = 'Export returned None'
 
         except Exception as e:
             duration = int(time.time() - start_time)
@@ -640,32 +664,41 @@ class TDLScheduler:
                     error_message=str(e)
                 )
 
-            if self.notifier:
-                self.notifier.notify_error(
-                    f"Error syncing chat",
-                    {'chat_id': chat_id, 'error': str(e)}
-                )
+            result['export_status'] = 'failed'
+            result['error'] = str(e)
 
         finally:
             session.close()
             with self._lock:
                 self._running_jobs.discard(job_key)
 
-    def run_download_job(self, chat_id: int, trigger: str = 'scheduled'):
+        return result
+
+    def run_download_job(self, chat_id: int, trigger: str = 'scheduled', batch_mode: bool = False) -> Dict[str, Any]:
         """
         Execute download job for a chat (depends on successful sync).
 
         Args:
             chat_id: Chat ID to download media for
             trigger: 'scheduled' or 'manual'
+            batch_mode: If True, suppress notifications and return result dict
+
+        Returns:
+            Result dict with download status and stats (only meaningful in batch_mode)
         """
+        result = {
+            'download_status': 'skipped',
+            'files_downloaded': 0,
+            'size_bytes': 0,
+            'error': None
+        }
         job_key = f"download_{chat_id}"
 
         # Prevent overlapping jobs
         with self._lock:
             if job_key in self._running_jobs:
                 console.print(f"[yellow]Download job for chat {chat_id} is already running[/yellow]")
-                return
+                return result
             self._running_jobs.add(job_key)
 
         session = self.db.get_session()
@@ -677,12 +710,12 @@ class TDLScheduler:
             chat = session.query(Chat).filter_by(id=chat_id).first()
             if not chat:
                 console.print(f"[red]Chat {chat_id} not found[/red]")
-                return
+                return result
 
             # Check if download is enabled
             if not chat.download_enabled and trigger == 'scheduled':
                 console.print(f"[dim]Download disabled for {chat.chat_name}[/dim]")
-                return
+                return result
 
             # Get last completed export for this chat
             last_export = session.query(Export)\
@@ -692,11 +725,12 @@ class TDLScheduler:
 
             if not last_export:
                 console.print(f"[dim]No export found for {chat.chat_name}[/dim]")
-                return
+                return result
 
             if last_export.media_count == 0:
                 console.print(f"[dim]No media to download for {chat.chat_name}[/dim]")
-                return
+                result['download_status'] = 'success'  # No media is not a failure
+                return result
 
             # Check if already downloaded successfully
             existing_download = session.query(Download)\
@@ -705,21 +739,15 @@ class TDLScheduler:
 
             if existing_download:
                 console.print(f"[dim]Already downloaded for {chat.chat_name}[/dim]")
-                return
+                result['download_status'] = 'success'
+                result['files_downloaded'] = existing_download.files_count or 0
+                result['size_bytes'] = existing_download.total_size_bytes or 0
+                return result
 
             console.print(f"\n[bold green]Downloading: {chat.chat_name}[/bold green]")
 
             # Create job log
             job_log = self.db.create_job_log(chat_id, 'download', trigger)
-
-            # Notify start
-            if self.notifier and trigger == 'scheduled':
-                self.notifier.notify_chat_progress(
-                    chat.chat_name,
-                    chat.chat_id,
-                    'download',
-                    'started'
-                )
 
             # Download files
             success = self.wrapper.download_from_export(last_export)
@@ -762,28 +790,10 @@ class TDLScheduler:
                         f"{files_downloaded} files, {bytes_downloaded:,} bytes ({duration}s)[/green]"
                     )
 
-                    # Notify completion
-                    if self.notifier and trigger == 'scheduled':
-                        self.notifier.notify_chat_progress(
-                            chat.chat_name,
-                            chat.chat_id,
-                            'download',
-                            'completed',
-                            {
-                                'files_count': files_downloaded,
-                                'total_size_bytes': bytes_downloaded,
-                                'duration_seconds': duration
-                            }
-                        )
-
-                        # Notify about new files
-                        if files_downloaded > 0:
-                            self.notifier.notify_new_files(
-                                chat.chat_name,
-                                chat.chat_id,
-                                files_downloaded,
-                                bytes_downloaded
-                            )
+                    # Update result
+                    result['download_status'] = 'success'
+                    result['files_downloaded'] = files_downloaded
+                    result['size_bytes'] = bytes_downloaded
 
             else:
                 # Download failed
@@ -798,13 +808,8 @@ class TDLScheduler:
 
                 console.print(f"[red]FAILED Failed to download {chat.chat_name}[/red]")
 
-                if self.notifier:
-                    self.notifier.notify_chat_progress(
-                        chat.chat_name,
-                        chat.chat_id,
-                        'download',
-                        'failed'
-                    )
+                result['download_status'] = 'failed'
+                result['error'] = 'Download returned False'
 
         except Exception as e:
             duration = int(time.time() - start_time)
@@ -819,16 +824,15 @@ class TDLScheduler:
                     error_message=str(e)
                 )
 
-            if self.notifier:
-                self.notifier.notify_error(
-                    f"Error downloading for chat",
-                    {'chat_id': chat_id, 'error': str(e)}
-                )
+            result['download_status'] = 'failed'
+            result['error'] = str(e)
 
         finally:
             session.close()
             with self._lock:
                 self._running_jobs.discard(job_key)
+
+        return result
 
     def enable_job(self, chat_id: int, job_type: str):
         """
