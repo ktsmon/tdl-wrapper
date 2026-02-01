@@ -4,7 +4,20 @@ from flask import Flask, render_template, jsonify, request
 import humanize
 import datetime
 from sqlalchemy import func
+from tzlocal import get_localzone
 from ..database import Chat, Export, Download, Schedule, JobLog
+
+
+def utc_to_local(utc_dt):
+    """Convert naive UTC datetime to local timezone."""
+    if utc_dt is None:
+        return None
+    # Make the naive datetime aware (as UTC)
+    utc_dt = utc_dt.replace(tzinfo=datetime.timezone.utc)
+    # Convert to local timezone
+    local_tz = get_localzone()
+    local_dt = utc_dt.astimezone(local_tz)
+    return local_dt.isoformat()
 
 
 def create_app(config, db, wrapper, scheduler=None):
@@ -134,30 +147,30 @@ def create_app(config, db, wrapper, scheduler=None):
                     'is_active': chat.is_active,
                     'sync_enabled': chat.sync_enabled,
                     'download_enabled': chat.download_enabled,
-                    'added_at': chat.added_at.isoformat() if chat.added_at else None,
-                    'last_checked': chat.last_checked.isoformat() if chat.last_checked else None,
+                    'added_at': utc_to_local(chat.added_at),
+                    'last_checked': utc_to_local(chat.last_checked),
                     'last_export': {
                         'id': last_export.id,
-                        'timestamp': last_export.export_timestamp.isoformat(),
+                        'timestamp': utc_to_local(last_export.export_timestamp),
                         'message_count': last_export.message_count,
                         'media_count': last_export.media_count,
                         'status': last_export.status
                     } if last_export else None,
                     'last_download': {
                         'id': last_download.id,
-                        'timestamp': last_download.download_timestamp.isoformat(),
+                        'timestamp': utc_to_local(last_download.download_timestamp),
                         'files_count': last_download.files_count,
                         'total_size_bytes': last_download.total_size_bytes,
                         'status': last_download.status
                     } if last_download else None,
                     'sync_schedule': {
                         'is_enabled': sync_schedule.is_enabled,
-                        'last_run_time': sync_schedule.last_run_time.isoformat() if sync_schedule.last_run_time else None,
+                        'last_run_time': utc_to_local(sync_schedule.last_run_time),
                         'interval_seconds': sync_schedule.interval_seconds
                     } if sync_schedule else None,
                     'download_schedule': {
                         'is_enabled': download_schedule.is_enabled,
-                        'last_run_time': download_schedule.last_run_time.isoformat() if download_schedule.last_run_time else None,
+                        'last_run_time': utc_to_local(download_schedule.last_run_time),
                         'interval_seconds': download_schedule.interval_seconds
                     } if download_schedule else None,
                     'last_sync_log': {
@@ -165,14 +178,14 @@ def create_app(config, db, wrapper, scheduler=None):
                         'messages_added': last_sync_log.messages_added,
                         'media_items_found': last_sync_log.media_items_found,
                         'duration_seconds': last_sync_log.duration_seconds,
-                        'timestamp': last_sync_log.job_timestamp.isoformat()
+                        'timestamp': utc_to_local(last_sync_log.job_timestamp)
                     } if last_sync_log else None,
                     'last_download_log': {
                         'status': last_download_log.status,
                         'files_downloaded': last_download_log.files_downloaded,
                         'bytes_downloaded': last_download_log.bytes_downloaded,
                         'duration_seconds': last_download_log.duration_seconds,
-                        'timestamp': last_download_log.job_timestamp.isoformat()
+                        'timestamp': utc_to_local(last_download_log.job_timestamp)
                     } if last_download_log else None
                 })
 
@@ -195,7 +208,7 @@ def create_app(config, db, wrapper, scheduler=None):
             for export in exports:
                 export_list.append({
                     'id': export.id,
-                    'export_timestamp': export.export_timestamp.isoformat(),
+                    'export_timestamp': utc_to_local(export.export_timestamp),
                     'start_timestamp': export.start_timestamp,
                     'end_timestamp': export.end_timestamp,
                     'message_count': export.message_count,
@@ -233,7 +246,7 @@ def create_app(config, db, wrapper, scheduler=None):
                 download_list.append({
                     'id': download.id,
                     'export_id': download.export_id,
-                    'download_timestamp': download.download_timestamp.isoformat(),
+                    'download_timestamp': utc_to_local(download.download_timestamp),
                     'files_count': download.files_count,
                     'total_size_bytes': download.total_size_bytes,
                     'status': status,
@@ -354,13 +367,13 @@ def create_app(config, db, wrapper, scheduler=None):
                         'id': j.id,
                         'chat_id': j.chat_id,
                         'chat_name': j.chat.chat_name,
-                        'started': j.started_at.isoformat()
+                        'started': utc_to_local(j.started_at)
                     } for j in running_syncs],
                     'downloads': [{
                         'id': j.id,
                         'chat_id': j.chat_id,
                         'chat_name': j.chat.chat_name,
-                        'started': j.started_at.isoformat()
+                        'started': utc_to_local(j.started_at)
                     } for j in running_downloads]
                 },
                 'recent': {
@@ -368,7 +381,7 @@ def create_app(config, db, wrapper, scheduler=None):
                         'id': j.id,
                         'chat_id': j.chat_id,
                         'chat_name': j.chat.chat_name,
-                        'completed': j.completed_at.isoformat() if j.completed_at else None,
+                        'completed': utc_to_local(j.completed_at),
                         'messages_added': j.messages_added,
                         'media_items_found': j.media_items_found
                     } for j in recent_syncs],
@@ -376,7 +389,7 @@ def create_app(config, db, wrapper, scheduler=None):
                         'id': j.id,
                         'chat_id': j.chat_id,
                         'chat_name': j.chat.chat_name,
-                        'completed': j.completed_at.isoformat() if j.completed_at else None,
+                        'completed': utc_to_local(j.completed_at),
                         'files_downloaded': j.files_downloaded,
                         'bytes_downloaded': j.bytes_downloaded
                     } for j in recent_downloads]
@@ -528,10 +541,10 @@ def create_app(config, db, wrapper, scheduler=None):
                 log_list.append({
                     'id': log.id,
                     'job_type': log.job_type,
-                    'job_timestamp': log.job_timestamp.isoformat(),
+                    'job_timestamp': utc_to_local(log.job_timestamp),
                     'status': log.status,
-                    'started_at': log.started_at.isoformat() if log.started_at else None,
-                    'completed_at': log.completed_at.isoformat() if log.completed_at else None,
+                    'started_at': utc_to_local(log.started_at),
+                    'completed_at': utc_to_local(log.completed_at),
                     'duration_seconds': log.duration_seconds,
                     'messages_added': log.messages_added,
                     'media_items_found': log.media_items_found,
@@ -563,10 +576,10 @@ def create_app(config, db, wrapper, scheduler=None):
                     'chat_id': log.chat_id,
                     'chat_name': log.chat.chat_name,
                     'job_type': log.job_type,
-                    'job_timestamp': log.job_timestamp.isoformat(),
+                    'job_timestamp': utc_to_local(log.job_timestamp),
                     'status': log.status,
-                    'started_at': log.started_at.isoformat() if log.started_at else None,
-                    'completed_at': log.completed_at.isoformat() if log.completed_at else None,
+                    'started_at': utc_to_local(log.started_at),
+                    'completed_at': utc_to_local(log.completed_at),
                     'duration_seconds': log.duration_seconds,
                     'messages_added': log.messages_added,
                     'media_items_found': log.media_items_found,
