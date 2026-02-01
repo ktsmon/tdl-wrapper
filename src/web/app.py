@@ -75,12 +75,19 @@ def create_app(config, db, wrapper, scheduler=None):
 
             # Get total files and size by scanning actual downloads directory
             # This gives accurate counts regardless of historical database issues
+            # Skip Emby metadata files: .nfo, .bif, and files with "poster" in name
             downloads_dir = Path(config.get('downloads', {}).get('base_directory', './downloads'))
             total_files = 0
             total_size = 0
+            skip_extensions = {'.nfo', '.bif'}
             if downloads_dir.exists():
                 for file_path in downloads_dir.rglob('*'):
                     if file_path.is_file():
+                        # Skip Emby metadata files
+                        if file_path.suffix.lower() in skip_extensions:
+                            continue
+                        if 'poster' in file_path.name.lower():
+                            continue
                         total_files += 1
                         try:
                             total_size += file_path.stat().st_size
