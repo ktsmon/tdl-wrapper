@@ -42,8 +42,7 @@ services:
       - TZ=Asia/Bangkok
 
     # Run web dashboard with Gunicorn (production WSGI server)
-    command: gunicorn --bind 0.0.0.0:5000 --workers 2 --threads 4 --access-logfile - wsgi:app
-
+    command: gunicorn --bind 0.0.0.0:5000 --workers 2 --threads 4 --access-logfile /dev/null wsgi:app
     # Optional: resource limits
     # deploy:
     #   resources:
