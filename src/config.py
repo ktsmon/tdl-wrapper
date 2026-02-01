@@ -28,8 +28,8 @@ class Config:
         },
         'scheduler': {
             'enabled': True,
-            'cron_schedule': '0 */6 * * *',  # Global cron schedule: every 6 hours
-            'timezone': 'UTC'
+            'cron_schedule': '0 */6 * * *'  # Global cron schedule: every 6 hours
+            # timezone: Use system timezone (set via TZ env var in Docker)
         },
         'discord': {
             'enabled': False,

@@ -504,7 +504,15 @@ class TDLWrapper:
             else:
                 print(f"Download timed out after {max_total}s, killing process tree...", flush=True)
                 self._kill_process_tree(process)
-                returncode = -1
+
+                # Verify if download actually completed despite timeout
+                print("Verifying if download completed...", flush=True)
+                if self._verify_download_complete(filtered_export_file, destination):
+                    print("Download verified complete! Final file exists.", flush=True)
+                    returncode = 0  # Treat as success
+                else:
+                    print("Download incomplete - final file not found", flush=True)
+                    returncode = -1
 
             duration = int(time.time() - start_time)
 
@@ -564,6 +572,12 @@ class TDLWrapper:
                 print(f"OK Download completed: {files_count} files ({total_size} bytes)", flush=True)
                 return True
             else:
+                # Even on failure, rename any files that were successfully downloaded
+                if self.config['downloads'].get('rename_by_timestamp', True):
+                    print("Renaming successfully downloaded files before marking failed...", flush=True)
+                    renamed = self._rename_files_by_timestamp(filtered_export_file, destination)
+                    print(f"Renamed {renamed} files", flush=True)
+
                 error_msg = f"Exit code: {result.returncode}"
                 print(f"Updating download {download_id} to failed...", flush=True)
                 self.db.update_download_status(
@@ -732,6 +746,107 @@ class TDLWrapper:
             import traceback
             print(traceback.format_exc(), flush=True)
             return None
+
+    def _verify_download_complete(self, export_file: str, destination: str) -> bool:
+        """
+        Verify if download is complete by checking if the last file from export exists.
+
+        This is used after a timeout to determine if the download actually completed
+        despite the process not exiting cleanly.
+
+        Args:
+            export_file: Path to export JSON file
+            destination: Directory containing downloaded files
+
+        Returns:
+            True if the last file from export exists in destination
+        """
+        try:
+            print(f"Verifying download completion from: {export_file}", flush=True)
+
+            # Parse export file
+            with open(export_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Handle different JSON structures from tdl
+            if isinstance(data, dict):
+                messages = data.get('messages', [])
+            elif isinstance(data, list):
+                messages = data
+            else:
+                print("Unknown export format, cannot verify", flush=True)
+                return False
+
+            # Find the last message with a file attachment
+            last_file_msg = None
+            for msg in reversed(messages):
+                file_field = msg.get('file')
+                if file_field:
+                    last_file_msg = msg
+                    break
+
+            if not last_file_msg:
+                print("No files in export, treating as complete", flush=True)
+                return True
+
+            # Get message ID and filename
+            message_id = last_file_msg.get('id') or last_file_msg.get('ID')
+            file_field = last_file_msg.get('file')
+
+            if isinstance(file_field, str):
+                original_name = file_field
+            elif isinstance(file_field, dict):
+                original_name = file_field.get('name')
+            else:
+                original_name = None
+
+            print(f"Last file in export: message_id={message_id}, filename={original_name}", flush=True)
+
+            # Get list of downloaded files
+            dest_path = Path(destination)
+            if not dest_path.exists():
+                print("Destination directory doesn't exist", flush=True)
+                return False
+
+            downloaded_files = {}
+            for file_path in dest_path.rglob('*'):
+                if file_path.is_file():
+                    downloaded_files[file_path.name] = file_path
+
+            print(f"Found {len(downloaded_files)} files in destination", flush=True)
+
+            # Check if last file exists by message ID (renamed format)
+            if message_id:
+                for actual_filename in downloaded_files.keys():
+                    filename_without_ext = actual_filename.rsplit('.', 1)[0]
+                    # Handle collision suffixes like "497_1.mp4"
+                    if '_' in filename_without_ext:
+                        filename_without_ext = filename_without_ext.split('_')[0]
+
+                    if filename_without_ext == str(message_id):
+                        print(f"Found last file by message ID: {actual_filename}", flush=True)
+                        return True
+
+            # Check by original filename (TDL prefix + original name)
+            if original_name:
+                for actual_filename in downloaded_files.keys():
+                    if actual_filename.endswith(original_name):
+                        print(f"Found last file by original name: {actual_filename}", flush=True)
+                        return True
+
+                # Check exact match
+                if original_name in downloaded_files:
+                    print(f"Found last file by exact name: {original_name}", flush=True)
+                    return True
+
+            print("Last file not found in destination", flush=True)
+            return False
+
+        except Exception as e:
+            print(f"Error verifying download completion: {e}", flush=True)
+            import traceback
+            print(traceback.format_exc(), flush=True)
+            return False
 
     def _filter_export_for_download(self, export_file: str, destination: str) -> Optional[str]:
         """

@@ -584,10 +584,12 @@ def create_app(config, db, wrapper, scheduler=None):
     @app.route('/api/scheduler/config')
     def get_scheduler_config():
         """Get current scheduler configuration."""
+        # Get actual timezone from scheduler (uses system TZ if not configured)
+        tz = str(scheduler.scheduler.timezone) if scheduler else config.get('scheduler.timezone', 'System')
         return jsonify({
             'enabled': config.get('scheduler.enabled', True),
             'cron_schedule': config.get('scheduler.cron_schedule', '0 */6 * * *'),
-            'timezone': config.get('scheduler.timezone', 'UTC')
+            'timezone': tz
         })
 
     @app.route('/api/downloads/timeout_config')
@@ -747,7 +749,7 @@ def create_app(config, db, wrapper, scheduler=None):
             'config': {
                 'enabled': scheduler.config.get('enabled', True),
                 'cron_schedule': scheduler.config.get('cron_schedule', '0 */6 * * *'),
-                'timezone': scheduler.config.get('timezone', 'UTC')
+                'timezone': str(scheduler.scheduler.timezone)  # Actual scheduler timezone
             }
         })
 

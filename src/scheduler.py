@@ -42,8 +42,11 @@ class TDLScheduler:
         self.config = config
         self.notifier = notifier
 
+        # Use local/system timezone by default (set via TZ env var in Docker)
+        # If no timezone in config, use None to let APScheduler use local timezone
+        tz = config.get('timezone')
         self.scheduler = BackgroundScheduler(
-            timezone=config.get('timezone', 'UTC')
+            timezone=tz  # None = use system timezone
         )
 
         # Add event listeners for debugging
@@ -124,7 +127,8 @@ class TDLScheduler:
             tuple: (is_valid: bool, error_message: str)
         """
         try:
-            trigger = CronTrigger.from_crontab(cron_expr)
+            # Use scheduler's timezone for consistency
+            trigger = CronTrigger.from_crontab(cron_expr, timezone=self.scheduler.timezone)
             # Test if we can get next run time
             next_run = trigger.get_next_fire_time(None, datetime.datetime.now(trigger.timezone))
             if next_run is None:
@@ -295,9 +299,9 @@ class TDLScheduler:
         try:
             cron_schedule = self.config.get('cron_schedule', '0 */6 * * *')
 
-            # Validate and create trigger
+            # Validate and create trigger (use scheduler's timezone for consistency)
             try:
-                trigger = CronTrigger.from_crontab(cron_schedule)
+                trigger = CronTrigger.from_crontab(cron_schedule, timezone=self.scheduler.timezone)
             except ValueError as e:
                 console.print(f"[red]Invalid cron schedule '{cron_schedule}': {e}[/red]")
                 console.print("[yellow]Please fix the cron schedule in config.yaml[/yellow]")
@@ -460,7 +464,7 @@ class TDLScheduler:
         cron_schedule = self.config.get('cron_schedule', '0 */6 * * *')
 
         try:
-            trigger = CronTrigger.from_crontab(cron_schedule)
+            trigger = CronTrigger.from_crontab(cron_schedule, timezone=self.scheduler.timezone)
             next_run = trigger.get_next_fire_time(None, datetime.datetime.now(trigger.timezone))
 
             session = self.db.get_session()
@@ -851,7 +855,7 @@ class TDLScheduler:
             # Update next_run_time based on current cron schedule
             cron_schedule = self.config.get('cron_schedule', '0 */6 * * *')
             try:
-                trigger = CronTrigger.from_crontab(cron_schedule)
+                trigger = CronTrigger.from_crontab(cron_schedule, timezone=self.scheduler.timezone)
                 next_run = trigger.get_next_fire_time(None, datetime.datetime.now(trigger.timezone))
                 schedule.next_run_time = next_run
             except ValueError:
