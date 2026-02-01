@@ -41,8 +41,8 @@ services:
       #Timezone
       - TZ=Asia/Bangkok
 
-    # Run web dashboard by default (change to daemon for scheduler mode)
-    command: python -m src.cli web
+    # Run web dashboard with Gunicorn (production WSGI server)
+    command: gunicorn --bind 0.0.0.0:5000 --workers 2 --threads 4 --access-logfile - wsgi:app
 
     # Optional: resource limits
     # deploy:
